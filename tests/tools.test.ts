@@ -7,17 +7,18 @@
  * capabilities — so nothing may be reachable only as a prompt or a resource.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, open, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { createDeps } from '../src/deps.js';
-import { registerSkillTools } from '../src/tools/skills.js';
+import { registerSkillTools, mediaTypeFor, MAX_FILE_BYTES } from '../src/tools/skills.js';
 
 let root = '';
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+const HUGE_BYTES = 256 * 1024 * 1024;
 
 beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), 'skill-tools-')));
@@ -52,11 +53,53 @@ beforeAll(async () => {
   await writeFile(join(demo, 'references', 'notes.md'), 'Some notes.\n');
   await writeFile(join(demo, 'references', 'pixel.png'), PNG);
 
+  // Declares an "interpreter" that exists only on Object.prototype. A
+  // prototype-chain lookup answers with a function and would report the skill
+  // as executable; the set has to be closed by the lookup itself.
+  const proto = join(root, 'protoonly');
+  await mkdir(join(proto, 'scripts'), { recursive: true });
+  await writeFile(
+    join(proto, 'SKILL.md'),
+    [
+      '---',
+      'name: protoonly',
+      'description: Declares an inherited property as its interpreter.',
+      'mcp-host:',
+      '  version: 1',
+      '  run:',
+      '    - script: scripts/x.js',
+      '      interpreter: constructor',
+      '---',
+      'x',
+      '',
+    ].join('\n'),
+  );
+  await writeFile(join(proto, 'scripts', 'x.js'), `process.stdout.write('never runs')\n`);
+
   const plain = join(root, 'plain');
   await mkdir(plain, { recursive: true });
   await writeFile(join(plain, 'SKILL.md'), '---\nname: plain\ndescription: Instructions only.\n---\nJust text.\n');
 
-  const deps = await createDeps({ MCP_SKILLS_PATH: root });
+  // A bundle carrying one file far larger than skill_file's cap. Sparse, so it
+  // costs no disk and no time; §5.3 permits a 256 MiB bundle unpacked, and this
+  // is what one large file inside one looks like.
+  const bulky = join(root, 'bulky');
+  await mkdir(bulky, { recursive: true });
+  await writeFile(join(bulky, 'SKILL.md'), '---\nname: bulky\ndescription: Carries a huge file.\n---\nBig.\n');
+  const handle = await open(join(bulky, 'huge.bin'), 'w');
+  try {
+    await handle.truncate(HUGE_BYTES);
+  } finally {
+    await handle.close();
+  }
+
+  // The hosted shape: the roots injected by the runner AND the owner's grant
+  // supplied explicitly. Without `MCP_SKILL_RUN` a hosted server grants NOTHING
+  // (config.ts) — pinned by "the hosted default" test below.
+  const deps = await createDeps({
+    MCP_SKILLS_PATH: root,
+    MCP_SKILL_RUN: JSON.stringify([{ skill: 'demo', script: 'scripts/echo.js' }]),
+  });
   harness = await createTestHarness((server) => registerSkillTools(server, deps));
 });
 
@@ -115,6 +158,31 @@ describe('skill_list', () => {
     );
     expect(body.skills.find((s) => s.name === 'plain')?.executable).toBe(false);
   });
+
+  it('does not treat an inherited property name as an interpreter this deployment runs', async () => {
+    const body = parseToolResult<{
+      skills: {
+        name: string;
+        executable: boolean;
+        scripts: unknown[];
+        unavailableScripts: { script: string; reason: string }[];
+      }[];
+    }>(await harness.callTool('skill_list'));
+
+    const proto = body.skills.find((s) => s.name === 'protoonly');
+    expect(proto?.executable).toBe(false);
+    expect(proto?.scripts).toEqual([]);
+    expect(proto?.unavailableScripts[0]?.script).toBe('scripts/x.js');
+    expect(proto?.unavailableScripts[0]?.reason).toContain('constructor');
+  });
+});
+
+describe('media types', () => {
+  it('answers only for extensions it actually maps, never an inherited one', () => {
+    expect(mediaTypeFor('notes.md')).toBe('text/markdown');
+    expect(mediaTypeFor('x.constructor')).toBe('application/octet-stream');
+    expect(mediaTypeFor('x.toString')).toBe('application/octet-stream');
+  });
 });
 
 describe('skill_load', () => {
@@ -155,6 +223,93 @@ describe('skill_file', () => {
   it('refuses a path that leaves the skill directory', async () => {
     const result = await harness.callTool('skill_file', { name: 'demo', path: '../plain/SKILL.md' });
     expect(result.isError).toBe(true);
+  });
+
+  it('caps a huge file, reports the truncation, and names the real size', async () => {
+    const body = parseToolResult<{ size: number; truncated: boolean; content: string }>(
+      await harness.callTool('skill_file', { name: 'bulky', path: 'huge.bin' }),
+    );
+    expect(body.size).toBe(HUGE_BYTES);
+    expect(body.truncated).toBe(true);
+    expect(Buffer.from(body.content, 'base64').byteLength).toBe(MAX_FILE_BYTES);
+  });
+
+  it('ALLOCATES no more than the cap while serving that read', async () => {
+    // The cap exists to bound the child's heap (docs/SKILL-MCP.md §2.1), and a
+    // hosted child gets RLIMIT_DATA 256 MiB hard. Asserting only `truncated`
+    // above passes against a whole-file read, which is how this shipped once.
+    const before = process.memoryUsage().arrayBuffers;
+    let peak = before;
+    const sample = (): void => {
+      peak = Math.max(peak, process.memoryUsage().arrayBuffers);
+    };
+    const timer = setInterval(sample, 2);
+    let result;
+    try {
+      result = await harness.callTool('skill_file', { name: 'bulky', path: 'huge.bin' });
+    } finally {
+      clearInterval(timer);
+    }
+    sample();
+
+    expect(result.isError).not.toBe(true);
+    // The base64 string and its round-trip check cost a few MiB on top of the
+    // 1 MiB read; a whole-file read costs 256 MiB.
+    expect(peak - before).toBeLessThan(32 * 1024 * 1024);
+  });
+});
+
+describe('the hosted default grant', () => {
+  it('grants NOTHING when the roots came from the runner and no grant was set', async () => {
+    // docs/SKILL-MCP.md §7: "A registration created without this field executes
+    // nothing." One child holds one environment holding every credential the
+    // owner set, so a skill naming its neighbour's variable in its OWN
+    // frontmatter must not be handed the neighbour's credential.
+    const deps = await createDeps({ MCP_SKILLS_PATH: root });
+    const local = await createTestHarness((server) => registerSkillTools(server, deps));
+    try {
+      const body = parseToolResult<{
+        grantFrom: string;
+        grantNote?: string;
+        skills: { name: string; executable: boolean; scripts: unknown[]; ungrantedScripts?: unknown[] }[];
+      }>(await local.callTool('skill_list'));
+
+      const demo = body.skills.find((s) => s.name === 'demo');
+      expect(body.grantFrom).toBe('hosted-default');
+      expect(body.grantNote).toMatch(/MCP_SKILL_RUN/);
+      expect(demo?.executable).toBe(false);
+      expect(demo?.scripts).toEqual([]);
+      // Reported, not merely absent: a skill that declares a script and cannot
+      // run it here must not look like a skill that declared nothing.
+      expect(demo?.ungrantedScripts).toHaveLength(1);
+
+      const run = await local.callTool('skill_run', {
+        name: 'demo',
+        script: 'scripts/echo.js',
+        confirm: true,
+      });
+      expect(run.isError).toBe(true);
+      expect(JSON.stringify(run.content)).toMatch(/not declared|not granted/i);
+    } finally {
+      await local.close();
+    }
+  });
+
+  it('still lets a standalone run (SKILLS_DIR) fall back to the declaration', async () => {
+    // Nobody is injecting anything there, so the skill's own declaration is the
+    // only statement of intent that exists — and the person who pointed the
+    // server at the directory is the owner.
+    const deps = await createDeps({ SKILLS_DIR: root });
+    const local = await createTestHarness((server) => registerSkillTools(server, deps));
+    try {
+      const body = parseToolResult<{ grantFrom: string; skills: { name: string; scripts: unknown[] }[] }>(
+        await local.callTool('skill_list'),
+      );
+      expect(body.grantFrom).toBe('declaration');
+      expect(body.skills.find((s) => s.name === 'demo')?.scripts).toHaveLength(1);
+    } finally {
+      await local.close();
+    }
   });
 });
 

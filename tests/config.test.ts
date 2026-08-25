@@ -45,9 +45,61 @@ describe('loadConfig', () => {
     const config = loadConfig({ MCP_SKILL_RUN: '{not json' });
     expect(config.grant?.entries).toEqual([]);
     expect(config.grantError).toMatch(/MCP_SKILL_RUN/);
+    expect(config.grantFrom).toBe('MCP_SKILL_RUN');
   });
 
-  it('leaves the grant absent when the variable is unset', () => {
-    expect(loadConfig({}).grant).toBeUndefined();
+  it('leaves the grant absent when nothing is injecting the roots', () => {
+    const config = loadConfig({});
+    expect(config.grant).toBeUndefined();
+    expect(config.grantFrom).toBe('declaration');
+  });
+
+  it('reads the grant when it is set', () => {
+    const config = loadConfig({ MCP_SKILL_RUN: '[{"skill":"a","script":"s.js"}]' });
+    expect(config.grant?.entries).toHaveLength(1);
+    expect(config.grantFrom).toBe('MCP_SKILL_RUN');
+  });
+
+  /*
+   * The default is per CALLER, and the hosted half is fail-CLOSED.
+   *
+   * docs/SKILL-MCP.md §7: "Empty by default. A registration created without
+   * this field executes nothing." When a runner is injecting the roots there IS
+   * a registration and an owner behind this child, so an absent grant means the
+   * owner granted nothing — not that the skill's own frontmatter decides. One
+   * child holds one environment holding every credential the owner set, so
+   * skill A's frontmatter naming skill B's variable is exactly the failure the
+   * grant exists to prevent, and whoever writes mcp-host's write path must not
+   * be able to forget the variable and get a silently wider server.
+   *
+   * Standalone use keeps declaration-stands: nothing is injecting anything, the
+   * person who pointed the server at a directory is the owner, and an empty
+   * default there would make `npx @chrischall/skill-mcp` do nothing at all.
+   */
+  it('grants NOTHING by default when the roots were injected by a host', () => {
+    const config = loadConfig({ MCP_SKILLS_PATH: '/slots/a' });
+    expect(config.grant?.entries).toEqual([]);
+    expect(config.grantFrom).toBe('hosted-default');
+    expect(config.grantError).toBeUndefined();
+  });
+
+  it('lets the declaration stand for a standalone SKILLS_DIR run', () => {
+    const config = loadConfig({ SKILLS_DIR: '/home/me/skills' });
+    expect(config.grant).toBeUndefined();
+    expect(config.grantFrom).toBe('declaration');
+  });
+
+  it('lets an explicit grant win over the hosted default, in both directions', () => {
+    const wider = loadConfig({
+      MCP_SKILLS_PATH: '/slots/a',
+      MCP_SKILL_RUN: '[{"skill":"a","script":"s.js"}]',
+    });
+    expect(wider.grantFrom).toBe('MCP_SKILL_RUN');
+    expect(wider.grant?.entries).toHaveLength(1);
+
+    // An explicitly empty grant is still explicitly empty, not the default.
+    expect(loadConfig({ MCP_SKILLS_PATH: '/slots/a', MCP_SKILL_RUN: '[]' }).grantFrom).toBe(
+      'MCP_SKILL_RUN',
+    );
   });
 });

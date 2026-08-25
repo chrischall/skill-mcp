@@ -6,11 +6,15 @@
  * reads. SKILL-1's design does not name the channel that carries the row to the
  * child (only `MCP_SKILLS_PATH` is specified), so this adapter reads an
  * optional `MCP_SKILL_RUN` and — the property that makes an unspecified
- * channel safe — treats it as NARROW-ONLY. Absent means the declaration
- * stands; present means the declaration intersected with it. There is no
- * spelling of this variable that makes something runnable which the skill did
- * not declare, so an owner who sets it in a registration's plain `env` can only
- * ever reduce what runs.
+ * channel safe — treats it as NARROW-ONLY: present means the declaration
+ * intersected with it, and there is no spelling of this variable that makes
+ * something runnable which the skill did not declare, so an owner who sets it in
+ * a registration's plain `env` can only ever reduce what runs.
+ *
+ * What an ABSENT variable means is `config.ts`'s decision and is tested there:
+ * the EMPTY grant when a host injected the roots (§7's "empty by default", which
+ * is a statement about a registration), the declaration when somebody ran this
+ * from a terminal. The functions below are the mechanism for both.
  */
 import { describe, it, expect } from 'vitest';
 import { GrantError, parseGrant, applyGrant } from '../src/grant.js';

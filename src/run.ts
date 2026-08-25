@@ -15,9 +15,15 @@
  *    never inferred from the extension and never taken from the file's own
  *    shebang — a file that can choose its own interpreter has already chosen
  *    its own program;
- *  - bounded: a wall-clock timeout, a per-stream output cap with the
- *    truncation REPORTED, one run at a time, and the process GROUP killed on
- *    timeout rather than the leader alone;
+ *  - bounded, and the CALL always returns: a wall-clock timeout, a per-stream
+ *    output cap with the truncation REPORTED, one run at a time, and the
+ *    process GROUP signalled on timeout rather than the leader alone. The group
+ *    kill reaches a cooperating tree and nothing else — a grandchild that
+ *    detached into its own group survives it AND holds the stdio pipes, so the
+ *    run settles on the process EXITING (plus a short drain) under a hard
+ *    deadline, never on the pipes closing. That is what bounds the tool call
+ *    and frees the one-at-a-time lock; it is not a claim that the grandchild
+ *    is dead, which is the tier's job (§6.2), not this module's;
  *  - an env allowlist (`env.ts`);
  *  - `cwd` is the skill's directory, which is read-only when hosted.
  *
@@ -44,7 +50,35 @@ import { resolveInsideSkill } from './paths.js';
  * and the skill's INSTRUCTIONS still serve. A pinned interpreter arrives as a
  * dependency, never as an image change (docs/SKILL-MCP.md §6.1).
  */
-export const INTERPRETERS: Record<string, string> = { node: process.execPath };
+export const INTERPRETERS: Readonly<Record<string, string>> = Object.freeze(
+  Object.assign(Object.create(null) as Record<string, string>, { node: process.execPath }),
+);
+
+/**
+ * The lookup, and it is a FUNCTION rather than an index read on purpose.
+ *
+ * `INTERPRETERS[name]` walks the prototype chain, so on an ordinary object
+ * literal `constructor` and `toString` both answer with a function and a skill
+ * declaring `interpreter: constructor` passes a `!interpreterPath` gate — it is
+ * then reported as runnable, previewed as runnable, and stopped only by
+ * `spawn`'s own argument type check, which is an incidental downstream
+ * behaviour rather than this fence. The null-prototype object above closes the
+ * set; this function is the second of the two, so a later edit that swaps the
+ * literal back cannot silently reopen it.
+ */
+export function interpreterPathFor(name: string): string | undefined {
+  return Object.hasOwn(INTERPRETERS, name) ? INTERPRETERS[name] : undefined;
+}
+
+/** True when this deployment can actually run scripts declaring `name`. */
+export function isRunnableInterpreter(name: string): boolean {
+  return interpreterPathFor(name) !== undefined;
+}
+
+/** The set, for a refusal message. */
+export function interpreterNames(): string[] {
+  return Object.keys(INTERPRETERS);
+}
 
 /** Per-stream capture cap. Truncation is reported, never silent (§6). */
 export const MAX_STREAM_BYTES = 1024 * 1024;
@@ -55,6 +89,16 @@ export const MAX_ARG_BYTES = 8 * 1024;
 
 /** Grace between the process group's SIGTERM and its SIGKILL. */
 const KILL_GRACE_MS = 2_000;
+
+/**
+ * How long the run waits for the pipes AFTER the process itself has exited.
+ * Re-armed by each chunk that arrives in the window, so an actively draining
+ * stream is not cut short.
+ */
+const DRAIN_MS = 250;
+
+/** Headroom on the hard deadline, over the timeout + kill grace + drain. */
+const HARD_DEADLINE_SLACK_MS = 1_000;
 
 /** A call this adapter refuses to make. Distinct from a script that ran and failed. */
 export class RunRefusedError extends McpToolError {
@@ -207,10 +251,10 @@ async function execute(opts: RunOptions, sourceEnv: NodeJS.ProcessEnv): Promise<
     );
   }
 
-  const interpreterPath = INTERPRETERS[declared.interpreter];
-  if (!interpreterPath) {
+  const interpreterPath = interpreterPathFor(declared.interpreter);
+  if (interpreterPath === undefined) {
     throw new RunRefusedError(
-      `"${script}" declares the interpreter "${declared.interpreter}", which this deployment cannot run; it runs: ${Object.keys(INTERPRETERS).join(', ')}`,
+      `"${script}" declares the interpreter "${declared.interpreter}", which this deployment cannot run; it runs: ${interpreterNames().join(', ')}`,
       "The skill's instructions are still available through skill_load — only its scripts are unavailable here.",
     );
   }
@@ -231,9 +275,10 @@ async function execute(opts: RunOptions, sourceEnv: NodeJS.ProcessEnv): Promise<
         env,
         // shell:false is the rule, spelled rather than defaulted.
         shell: false,
-        // Its own process group, so a timeout kills the whole tree: a script
-        // that spawned a grandchild and exited would otherwise leave it running
-        // and the pipes open.
+        // Its own process group, so a timeout reaches a cooperating tree rather
+        // than the leader alone. It does NOT reach a grandchild that detached
+        // into a group of its own — see the settle rule below, which is what
+        // actually bounds the call.
         detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -242,6 +287,10 @@ async function execute(opts: RunOptions, sourceEnv: NodeJS.ProcessEnv): Promise<
       const err = new CappedStream();
       let timedOut = false;
       let settled = false;
+      let exited = false;
+      let exitCode: number | null = null;
+      let exitSignal: NodeJS.Signals | null = null;
+      let drainTimer: NodeJS.Timeout | undefined;
 
       const killGroup = (signal: NodeJS.Signals): void => {
         if (child.pid === undefined) return;
@@ -256,42 +305,33 @@ async function execute(opts: RunOptions, sourceEnv: NodeJS.ProcessEnv): Promise<
         }
       };
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        killGroup('SIGTERM');
-        setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS).unref();
-      }, timeoutMs);
-      timer.unref();
-
-      child.stdout?.on('data', (chunk: Buffer) => out.push(chunk));
-      child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
-
-      child.on('error', (spawnErr) => {
+      /**
+       * Settle once, from whichever of the three paths gets there first.
+       *
+       * The streams are destroyed here rather than left to close on their own:
+       * a detached grandchild can hold the write end of this pipe for as long
+       * as it likes, and an undestroyed read end keeps a handle (and this
+       * promise's `finally`, which frees the one-at-a-time lock) alive with it.
+       */
+      const finish = (): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        reject(
-          new RunRefusedError(
-            `could not start "${script}": ${spawnErr.message}`,
-            'The interpreter this deployment runs is node; the script must be a regular file in the skill.',
-          ),
-        );
-      });
-
-      child.on('close', (code, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        // A SIGKILL of the group can outlive the leader; make sure nothing is left.
+        clearTimeout(hard);
+        if (drainTimer) clearTimeout(drainTimer);
+        // A SIGKILL of the group can outlive the leader; make sure nothing that
+        // stayed in the group is left.
         if (timedOut) killGroup('SIGKILL');
+        child.stdout?.destroy();
+        child.stderr?.destroy();
 
-        const failed = timedOut || code !== 0;
+        const failed = timedOut || exitCode !== 0;
         resolve({
           skill: skill.name,
           script,
           interpreter: declared.interpreter,
-          exitCode: code,
-          signal: signal ?? null,
+          exitCode,
+          signal: exitSignal,
           stdout: out.text(),
           stderr: err.text(),
           truncated: { stdout: out.truncated, stderr: err.truncated },
@@ -301,6 +341,80 @@ async function execute(opts: RunOptions, sourceEnv: NodeJS.ProcessEnv): Promise<
           env: Object.keys(env).sort(),
           ...(failed && fencedNetwork(sourceEnv) ? { networkNote: NETWORK_NOTE } : {}),
         });
+      };
+
+      /**
+       * After the process itself is gone, wait only this long for whatever the
+       * pipes still hold. Re-armed by each chunk that arrives, so a stream that
+       * is genuinely still delivering is not cut off — and bounded from above
+       * by `hard`, so nothing here can extend the call indefinitely.
+       */
+      const drain = (): void => {
+        if (drainTimer) clearTimeout(drainTimer);
+        drainTimer = setTimeout(finish, DRAIN_MS);
+        drainTimer.unref();
+      };
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killGroup('SIGTERM');
+        setTimeout(() => killGroup('SIGKILL'), KILL_GRACE_MS).unref();
+      }, timeoutMs);
+      timer.unref();
+
+      // The last word, and the reason the tool call is bounded at all: `close`
+      // waits for the stdio pipes rather than for the process, so a grandchild
+      // that detached into its own group can hold them open past every kill we
+      // are able to send. Without this the promise never settles, the tool call
+      // never returns, and the lock released in its `finally` is never released
+      // — one call permanently denying `skill_run` for the life of the server.
+      const hard = setTimeout(() => {
+        timedOut = true;
+        killGroup('SIGKILL');
+        finish();
+      }, timeoutMs + KILL_GRACE_MS + DRAIN_MS + HARD_DEADLINE_SLACK_MS);
+      hard.unref();
+
+      child.stdout?.on('data', (chunk: Buffer) => {
+        out.push(chunk);
+        if (exited) drain();
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+        err.push(chunk);
+        if (exited) drain();
+      });
+
+      child.on('error', (spawnErr) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        clearTimeout(hard);
+        if (drainTimer) clearTimeout(drainTimer);
+        reject(
+          new RunRefusedError(
+            `could not start "${script}": ${spawnErr.message}`,
+            'The interpreter this deployment runs is node; the script must be a regular file in the skill.',
+          ),
+        );
+      });
+
+      // 'exit' is the process; 'close' is the pipes. The process is what the
+      // exit code and the timeout are about, so it is what starts the clock.
+      child.on('exit', (code, signal) => {
+        exited = true;
+        exitCode = code;
+        exitSignal = signal ?? null;
+        drain();
+      });
+
+      // The fast path: everything the child owned is closed, so there is
+      // nothing left to wait for.
+      child.on('close', (code, signal) => {
+        if (!exited) {
+          exitCode = code;
+          exitSignal = signal ?? null;
+        }
+        finish();
       });
   });
 }

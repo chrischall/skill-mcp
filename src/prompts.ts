@@ -15,10 +15,10 @@
  * Resources are registered from the catalog snapshot and read through the same
  * containment check the tools use: a URI is caller input like any other path.
  */
-import { readFile } from 'node:fs/promises';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SkillMcpDeps } from './deps.js';
 import { resolveInsideSkill } from './paths.js';
+import { readCapped } from './read-capped.js';
 import { mediaTypeFor, MAX_FILE_BYTES } from './tools/skills.js';
 
 /**
@@ -65,8 +65,9 @@ export function registerSkillPrompts(server: McpServer, deps: SkillMcpDeps): voi
           // Re-resolved on every read rather than trusted from the listing: the
           // URI arrives from the caller, and a listed path is not a capability.
           const target = await resolveInsideSkill(skill.dir, file.path);
-          const raw = await readFile(target);
-          const bytes = raw.byteLength > MAX_FILE_BYTES ? raw.subarray(0, MAX_FILE_BYTES) : raw;
+          // The same bounded read `skill_file` uses, for the same reason: this
+          // door is narrower, not safer (read-capped.ts).
+          const { bytes } = await readCapped(target, MAX_FILE_BYTES);
           const mimeType = mediaTypeFor(file.path);
           const isText = !bytes.includes(0);
           return {

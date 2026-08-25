@@ -19,6 +19,8 @@ import {
   RunRefusedError,
   runDeclaredScript,
   createRunLock,
+  interpreterPathFor,
+  isRunnableInterpreter,
 } from '../src/run.js';
 import type { DiscoveredSkill } from '../src/discovery.js';
 import { discoverSkills } from '../src/discovery.js';
@@ -58,6 +60,13 @@ beforeAll(async () => {
       '      interpreter: node',
       '    - script: scripts/py.py',
       '      interpreter: python3',
+      '    - script: scripts/detached.js',
+      '      interpreter: node',
+      '    - script: scripts/spin-detached.js',
+      '      interpreter: node',
+      '      timeout: 1',
+      '    - script: scripts/proto.js',
+      '      interpreter: constructor',
       '---',
       'Instructions.',
       '',
@@ -81,6 +90,34 @@ beforeAll(async () => {
     `const chunk = 'x'.repeat(64 * 1024); for (let i = 0; i < 40; i += 1) process.stdout.write(chunk);\n`,
   );
   await writeFile(join(demo, 'scripts', 'py.py'), `print("never runs")\n`);
+  // A leader that exits at once but leaves a DETACHED grandchild holding the
+  // stdio pipes. `close` fires when the pipes close, not when the process dies,
+  // so a run that waits for `close` never settles and never releases the lock.
+  await writeFile(
+    join(demo, 'scripts', 'detached.js'),
+    [
+      "const { spawn } = require('node:child_process');",
+      "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], { detached: true, stdio: ['ignore', 1, 2] });",
+      'g.unref();',
+      "process.stdout.write('leader done\\n');",
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+  );
+  // The same, but the leader also outruns its timeout: the group kill reaches
+  // the leader and never the grandchild, so the pipes stay open either way.
+  await writeFile(
+    join(demo, 'scripts', 'spin-detached.js'),
+    [
+      "const { spawn } = require('node:child_process');",
+      "const g = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 3000)'], { detached: true, stdio: ['ignore', 1, 2] });",
+      'g.unref();',
+      "process.stdout.write('started\\n');",
+      'setInterval(() => {}, 1000);',
+      '',
+    ].join('\n'),
+  );
+  await writeFile(join(demo, 'scripts', 'proto.js'), `process.stdout.write('never runs')\n`);
   // Present in the bundle, deliberately NOT declared.
   await writeFile(join(demo, 'scripts', 'undeclared.js'), `process.stdout.write('ran')\n`);
   await chmod(join(demo, 'scripts', 'undeclared.js'), 0o755);
@@ -194,6 +231,27 @@ describe('rule: an interpreter from a closed set', () => {
   it('offers exactly one interpreter in v1', () => {
     expect(Object.keys(INTERPRETERS)).toEqual(['node']);
   });
+
+  it('is a CLOSED set: a name inherited from Object.prototype is not in it', async () => {
+    // `INTERPRETERS[name]` is a prototype-chain lookup, so "constructor" and
+    // "toString" both answer with a function on a plain object literal. The set
+    // has to be closed by the lookup, not by whatever type check happens to sit
+    // downstream of it.
+    expect(interpreterPathFor('constructor')).toBeUndefined();
+    expect(interpreterPathFor('toString')).toBeUndefined();
+    expect(isRunnableInterpreter('constructor')).toBe(false);
+
+    await run(skillOf('demo'), 'scripts/proto.js').then(
+      () => {
+        throw new Error('should have refused');
+      },
+      (err: RunRefusedError) => {
+        expect(err).toBeInstanceOf(RunRefusedError);
+        expect(err.message).toContain('constructor');
+        expect(err.message).toContain('node');
+      },
+    );
+  });
 });
 
 describe('rule: the env allowlist', () => {
@@ -255,6 +313,56 @@ describe('rule: bounded', () => {
     const result = await run(skillOf('demo'), 'scripts/flood.js');
     expect(result.truncated.stdout).toBe(true);
     expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(MAX_STREAM_BYTES);
+  }, 20_000);
+
+  it('settles when a DETACHED grandchild keeps the pipes open, and frees the lock', async () => {
+    // `close` waits for the stdio pipes, and a grandchild in its own process
+    // group holds them after the leader has exited — so a run that settles only
+    // on `close` hangs for as long as the grandchild lives and wedges the
+    // one-at-a-time lock for the life of the process.
+    const lock = createRunLock();
+    const started = Date.now();
+    const result = await runDeclaredScript({
+      skill: skillOf('demo'),
+      script: 'scripts/detached.js',
+      args: [],
+      lock,
+      sourceEnv: {},
+    });
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('leader done');
+    expect(result.timedOut).toBe(false);
+    expect(lock.busy).toBe(false);
+
+    // The lock is usable again, which is the half a wedged promise loses.
+    const next = await runDeclaredScript({
+      skill: skillOf('demo'),
+      script: 'scripts/echo.js',
+      args: [],
+      lock,
+      sourceEnv: {},
+    });
+    expect(next.exitCode).toBe(0);
+  }, 20_000);
+
+  it('returns within the timeout even when the group kill cannot reach a grandchild', async () => {
+    const lock = createRunLock();
+    const started = Date.now();
+    const result = await runDeclaredScript({
+      skill: skillOf('demo'),
+      script: 'scripts/spin-detached.js',
+      args: [],
+      lock,
+      sourceEnv: {},
+    });
+
+    expect(result.timedOut).toBe(true);
+    expect(result.stdout).toContain('started');
+    // 1s declared timeout + the SIGKILL grace + the drain, generously bounded.
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(lock.busy).toBe(false);
   }, 20_000);
 
   it('runs one script at a time per server', async () => {

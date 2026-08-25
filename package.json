@@ -2,7 +2,7 @@
   "name": "@chrischall/skill-mcp",
   "version": "0.0.0",
   "mcpName": "io.github.chrischall/skill-mcp",
-  "description": "Serves a directory of Agent Skills as an MCP server — developed and maintained by AI (Claude Code)",
+  "description": "Serves a directory of Agent Skills as an MCP server \u2014 developed and maintained by AI (Claude Code)",
   "author": "Claude Code (AI) <https://www.anthropic.com/claude>",
   "repository": {
     "type": "git",
@@ -38,7 +38,8 @@
     "build": "tsc && npm run bundle",
     "bundle": "esbuild src/index.ts --bundle --platform=node --format=esm --banner:js=\"import{createRequire as __nodeCreateRequire}from'node:module';const require=__nodeCreateRequire(import.meta.url);\" --outfile=dist/bundle.js",
     "dev": "node dist/index.js",
-    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.tests.json",
+    "test": "npm run typecheck && vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"
   },

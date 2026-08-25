@@ -5,15 +5,15 @@
  * stops advertising those capabilities. Anything reachable only through them
  * would break on a flag that has nothing to do with skills.
  */
-import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { McpToolError, textResult, toolAnnotations, schemaConfirm } from '@chrischall/mcp-utils';
 import type { SkillMcpDeps } from '../deps.js';
 import type { DiscoveredSkill } from '../discovery.js';
 import { MAX_SKILL_MD_BYTES } from '../discovery.js';
-import { INTERPRETERS, MAX_ARGS, runDeclaredScript } from '../run.js';
+import { MAX_ARGS, interpreterNames, isRunnableInterpreter, runDeclaredScript } from '../run.js';
 import { resolveInsideSkill } from '../paths.js';
+import { readCapped } from '../read-capped.js';
 
 /** Largest file `skill_file` returns (docs/SKILL-MCP.md §2.1). */
 export const MAX_FILE_BYTES = 1024 * 1024;
@@ -28,8 +28,16 @@ const PathArg = z
   .min(1)
   .describe('A path relative to the skill\'s own directory, as skill_load lists it.');
 
-/** Extension → media type, for the handful a skill bundle actually carries. */
-const MEDIA_TYPES: Record<string, string> = {
+/**
+ * Extension → media type, for the handful a skill bundle actually carries.
+ *
+ * Null-prototype, and read through `Object.hasOwn` below: an ordinary object
+ * literal answers `MEDIA_TYPES['constructor']` with a function, which a file
+ * named `x.constructor` would put straight into a JSON field of a tool result.
+ */
+const MEDIA_TYPES: Readonly<Record<string, string>> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
   md: 'text/markdown',
   txt: 'text/plain',
   json: 'application/json',
@@ -53,12 +61,13 @@ const MEDIA_TYPES: Record<string, string> = {
   webp: 'image/webp',
   pdf: 'application/pdf',
   zip: 'application/zip',
-};
+  },
+);
 
 /** The media type for a bundled file, defaulting to a byte stream. */
 export function mediaTypeFor(path: string): string {
   const ext = path.includes('.') ? path.slice(path.lastIndexOf('.') + 1).toLowerCase() : '';
-  return MEDIA_TYPES[ext] ?? 'application/octet-stream';
+  return Object.hasOwn(MEDIA_TYPES, ext) ? MEDIA_TYPES[ext] : 'application/octet-stream';
 }
 
 /**
@@ -100,42 +109,67 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       return textResult({
         roots: catalog.roots,
         rootsFrom: config.rootsFrom,
+        grantFrom: config.grantFrom,
+        // "Nothing runs here" has more than one cause, and a caller cannot act
+        // on it without being told which. The hosted default is the one that
+        // looks like a broken server and is not (config.ts).
+        ...(config.grantFrom === 'hosted-default'
+          ? {
+              grantNote:
+                'The roots were injected by a host and no MCP_SKILL_RUN grant was supplied, so nothing may run. A script becomes runnable when the registration grants it; the instructions and files of every skill are served either way.',
+            }
+          : {}),
         ...(config.grantError !== undefined
           ? {
               grantError: `${config.grantError} — nothing is granted, so no script may run until it is fixed.`,
             }
           : {}),
-        skills: catalog.skills.map((skill) => ({
-          name: skill.name,
-          ...(skill.description !== undefined ? { description: skill.description } : {}),
-          ...(skill.whenToUse !== undefined ? { whenToUse: skill.whenToUse } : {}),
-          source: skill.root,
-          files: skill.files.length,
-          bytes: skill.files.reduce((sum, file) => sum + file.size, 0),
-          executable: skill.scripts.some((entry) => INTERPRETERS[entry.interpreter] !== undefined),
-          // The EXACT list, never "this skill has scripts": a client told a
-          // skill is executable and left to guess the entry point will guess.
-          scripts: skill.scripts
-            .filter((entry) => INTERPRETERS[entry.interpreter] !== undefined)
+        skills: catalog.skills.map((skill) => {
+          const granted = new Set(skill.scripts.map((entry) => entry.script));
+          // Both of the reported lists below are read off the DECLARATION,
+          // which is information and never authority: what may actually run is
+          // `scripts` and nothing else. Shown rather than omitted so "this
+          // skill has scripts and none of them run here" is legible instead of
+          // looking like a skill that declared nothing.
+          const unavailableScripts = skill.declaration.run
+            .filter((entry) => !isRunnableInterpreter(entry.interpreter))
             .map((entry) => ({
               script: entry.script,
-              interpreter: entry.interpreter,
-              timeoutMs: entry.timeoutMs,
-              env: entry.env,
-            })),
-          // Shown as refusals rather than omitted, so "this skill has scripts
-          // and none of them run here" is legible instead of looking like a
-          // skill that declared nothing.
-          unavailableScripts: skill.scripts
-            .filter((entry) => INTERPRETERS[entry.interpreter] === undefined)
+              reason: `declares the interpreter "${entry.interpreter}"; this deployment runs: ${interpreterNames().join(', ')}`,
+            }));
+          const ungrantedScripts = skill.declaration.run
+            .filter((entry) => isRunnableInterpreter(entry.interpreter) && !granted.has(entry.script))
             .map((entry) => ({
               script: entry.script,
-              reason: `declares the interpreter "${entry.interpreter}"; this deployment runs: ${Object.keys(INTERPRETERS).join(', ')}`,
-            })),
-          ...(skill.declaration.egress.length > 0
-            ? { declaredEgress: skill.declaration.egress }
-            : {}),
-        })),
+              reason:
+                'declared by the skill and not granted for this registration, so it may not run here',
+            }));
+
+          return {
+            name: skill.name,
+            ...(skill.description !== undefined ? { description: skill.description } : {}),
+            ...(skill.whenToUse !== undefined ? { whenToUse: skill.whenToUse } : {}),
+            source: skill.root,
+            files: skill.files.length,
+            bytes: skill.files.reduce((sum, file) => sum + file.size, 0),
+            executable: skill.scripts.some((entry) => isRunnableInterpreter(entry.interpreter)),
+            // The EXACT list, never "this skill has scripts": a client told a
+            // skill is executable and left to guess the entry point will guess.
+            scripts: skill.scripts
+              .filter((entry) => isRunnableInterpreter(entry.interpreter))
+              .map((entry) => ({
+                script: entry.script,
+                interpreter: entry.interpreter,
+                timeoutMs: entry.timeoutMs,
+                env: entry.env,
+              })),
+            unavailableScripts,
+            ...(ungrantedScripts.length > 0 ? { ungrantedScripts } : {}),
+            ...(skill.declaration.egress.length > 0
+              ? { declaredEgress: skill.declaration.egress }
+              : {}),
+          };
+        }),
         problems: catalog.problems,
       });
     },
@@ -167,7 +201,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
         scripts: skill.scripts.map((entry) => ({
           script: entry.script,
           interpreter: entry.interpreter,
-          runnableHere: INTERPRETERS[entry.interpreter] !== undefined,
+          runnableHere: isRunnableInterpreter(entry.interpreter),
         })),
       });
     },
@@ -187,20 +221,22 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       // is not less dangerous than an execution here.
       const target = await resolveInsideSkill(skill.dir, path);
 
-      const raw = await readFile(target);
-      const truncated = raw.byteLength > MAX_FILE_BYTES;
-      const bytes = truncated ? raw.subarray(0, MAX_FILE_BYTES) : raw;
+      // BOUNDED, not read-whole-then-slice: the cap exists to keep a bundled
+      // file out of this child's heap (docs/SKILL-MCP.md §2.1), and a hosted
+      // child has RLIMIT_DATA 256 MiB hard while §5.3 permits a 256 MiB bundle
+      // — so a slice after the fact bounds the frame and kills the server.
+      const { bytes, size, truncated } = await readCapped(target, MAX_FILE_BYTES);
       const text = isUtf8Text(bytes);
 
       return textResult({
         skill: skill.name,
         path,
-        size: raw.byteLength,
+        size,
         mediaType: mediaTypeFor(path),
         encoding: text ? 'utf-8' : 'base64',
         truncated,
         ...(truncated
-          ? { truncationNote: `The file is ${raw.byteLength} bytes; the first ${MAX_FILE_BYTES} are returned.` }
+          ? { truncationNote: `The file is ${size} bytes; the first ${MAX_FILE_BYTES} are returned.` }
           : {}),
         content: text ? bytes.toString('utf8') : bytes.toString('base64'),
       });
@@ -291,20 +327,26 @@ async function previewRun(
   const declared = skill.scripts.find((entry) => entry.script === script);
   if (!declared) {
     const offered = skill.scripts.map((entry) => entry.script);
+    // The two refusals are different facts and the caller can act on only one
+    // of them: "the skill never declared this" is a typo or a wrong pin, while
+    // "declared and not granted" is a registration edit the owner makes.
+    const inDeclaration = skill.declaration.run.some((entry) => entry.script === script);
     throw new McpToolError(
-      `"${script}" is not declared as a runnable script by the skill "${skill.name}"`,
+      inDeclaration
+        ? `"${script}" is declared by the skill "${skill.name}" but is not granted for this registration, so it may not run`
+        : `"${script}" is not declared as a runnable script by the skill "${skill.name}"`,
       {
         hint:
           offered.length > 0
-            ? `This skill declares: ${offered.join(', ')}. Only a script named in SKILL.md's "mcp-host.run" block, and accepted for this registration, may run.`
-            : 'This skill declares no runnable scripts. A script becomes runnable by being named in SKILL.md\'s "mcp-host.run" block and accepted at registration.',
+            ? `This registration may run: ${offered.join(', ')}. Only a script named in SKILL.md's "mcp-host.run" block, and accepted for this registration, may run.`
+            : 'Nothing may run for this skill. A script becomes runnable by being named in SKILL.md\'s "mcp-host.run" block AND accepted at registration; skill_list reports which of the two is missing.',
       },
     );
   }
 
-  if (INTERPRETERS[declared.interpreter] === undefined) {
+  if (!isRunnableInterpreter(declared.interpreter)) {
     throw new McpToolError(
-      `"${script}" declares the interpreter "${declared.interpreter}", which this deployment cannot run; it runs: ${Object.keys(INTERPRETERS).join(', ')}`,
+      `"${script}" declares the interpreter "${declared.interpreter}", which this deployment cannot run; it runs: ${interpreterNames().join(', ')}`,
       { hint: "The skill's instructions are still available through skill_load." },
     );
   }
@@ -313,7 +355,10 @@ async function previewRun(
   // out of the tree is refused at the preview too.
   await resolveInsideSkill(skill.dir, script);
 
-  const env = declared.env.filter((name) => deps.sourceEnv[name] !== undefined);
+  // `typeof === 'string'`, matching buildScriptEnv exactly: `!== undefined` is
+  // true for a name inherited from Object.prototype, and the preview must name
+  // the variables the script will actually be handed and no others.
+  const env = declared.env.filter((name) => typeof deps.sourceEnv[name] === 'string');
   return {
     dryRun: true,
     willRun: {
@@ -326,7 +371,7 @@ async function previewRun(
       envNames: env,
       ...(declared.env.length > env.length
         ? {
-            envNotSet: declared.env.filter((name) => deps.sourceEnv[name] === undefined),
+            envNotSet: declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string'),
           }
         : {}),
     },

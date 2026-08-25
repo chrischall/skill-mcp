@@ -4,9 +4,14 @@
 # tarball's integrity check, so nothing here reaches a child until an owner has
 # reviewed it and saved a registration.
 #
-# Read the three deliberate ABSENCES below with the keys — for this MCP they
+# Read the four deliberate ABSENCES below with the keys — for this MCP they
 # carry as much as what is here, and each is a thing only a registration can
-# decide.
+# decide. A fifth is not a choice at all: this file may not name a RUNTIME
+# (docs/MINT-MANIFEST.md §5 — there is no `runtime:` key and there will not be
+# one), which is precisely why the isolated tier a hosted skill server belongs
+# on is the registration's to pick. `egress.allow` below is the shape of the
+# same question a package IS allowed to answer, because it constrains rather
+# than requests.
 version: 1
 name: Skills
 slug: skills

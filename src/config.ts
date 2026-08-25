@@ -28,8 +28,10 @@ export interface SkillMcpConfig {
   roots: string[];
   /** Which variable supplied them — reported by `skill_list`, since "no skills" has several causes. */
   rootsFrom: 'MCP_SKILLS_PATH' | 'SKILLS_DIR' | 'default';
-  /** The owner's grant, when the host supplied one. Narrow-only (`grant.ts`). */
+  /** The owner's grant, when there is one. Narrow-only (`grant.ts`). */
   grant?: Grant;
+  /** Where the grant came from — reported by `skill_list`, since "nothing runs" has two causes. */
+  grantFrom: 'MCP_SKILL_RUN' | 'hosted-default' | 'declaration';
   /** A grant that was set but unreadable. Surfaced rather than silently ignored. */
   grantError?: string;
 }
@@ -75,15 +77,47 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SkillMcpConfig
   const config: SkillMcpConfig = {
     roots: roots.map((root) => resolve(root)),
     rootsFrom,
+    grantFrom: 'declaration',
   };
 
   try {
     const grant = parseGrant(readEnvVar('MCP_SKILL_RUN', { env }));
-    if (grant) config.grant = grant;
+    if (grant) {
+      config.grant = grant;
+      config.grantFrom = 'MCP_SKILL_RUN';
+    } else if (rootsFrom === 'MCP_SKILLS_PATH') {
+      /*
+       * The DEFAULT is per caller, and the hosted half is fail-CLOSED.
+       *
+       * docs/SKILL-MCP.md §7: *"Empty by default. A registration created
+       * without this field executes nothing"* — and the reason is the sentence
+       * before it. One child holds one environment holding every credential the
+       * owner set for the registration, so a skill whose own frontmatter names
+       * its NEIGHBOUR's variable would be handed the neighbour's credential
+       * with nothing anywhere having decided to give it. Letting the
+       * declaration stand there is that inverted.
+       *
+       * `MCP_SKILLS_PATH` is the runner injecting the roots, so there IS a
+       * registration and an owner behind this child, and an absent grant means
+       * the owner granted nothing — not that the frontmatter decides. Whoever
+       * writes mcp-host's write path must not be able to forget the variable
+       * and get a silently wider server; forgetting it here yields one that
+       * serves every skill's instructions and runs nothing, which is a working,
+       * useful connector and exactly what §7 describes.
+       *
+       * Standalone use (`SKILLS_DIR`, or the packaged default) keeps
+       * declaration-stands: nothing is injecting anything, the person who
+       * pointed the server at a directory is the owner, and an empty default
+       * there would make `npx @chrischall/skill-mcp` do nothing at all.
+       */
+      config.grant = { entries: [] };
+      config.grantFrom = 'hosted-default';
+    }
   } catch (err) {
     // A grant that cannot be read grants NOTHING — never everything. The two
     // are opposite answers and only one of them is safe to guess.
     config.grant = { entries: [] };
+    config.grantFrom = 'MCP_SKILL_RUN';
     config.grantError = err instanceof Error ? err.message : String(err);
   }
 

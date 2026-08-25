@@ -34,8 +34,16 @@ files those instructions refer to. Three layouts are found under each root:
 | --- | --- | --- |
 | `skill_list` | — | every skill found: name, description, when to use it, file count, whether it declares runnable scripts and **exactly which**; plus `problems`, so an empty list is never a mystery |
 | `skill_load` | `name` | the SKILL.md body **verbatim**, plus a manifest of the bundle's files. Referenced files are not inlined — that is what `skill_file` is for |
-| `skill_file` | `name`, `path` | one file from that skill's directory: text, or base64 with its media type |
+| `skill_file` | `name`, `path` | one file from that skill's directory: text, or base64 with its media type. At most 1 MiB, `truncated: true` rather than a silent cut |
 | `skill_run` | `name`, `script`, `args[]`, `confirm` | `{exitCode, stdout, stderr, truncated, durationMs}` |
+
+`skill_file` takes **one** path. The design of record specifies a `paths[]`
+batch (8 paths per call, 1 MiB per entry, 4 MiB per call, one bad path failing
+only its own slot); shipping the singular form is a deliberate deferral, not an
+oversight, and those three bounds are what a later batching change has to
+honour. Read the caps as bounds on this server's own heap: they cap the
+**allocation**, not only the answer, because a hosted child has a hard 256 MiB
+data limit and a bundle may be larger than that.
 
 Each skill is **also** registered as an MCP prompt (its body is the message) and
 each bundled file as a resource (`skill://<name>/<path>`), because a client that
@@ -45,6 +53,17 @@ second door, never the only one: when this server runs on
 `enabledTools`, `prompts/list` and `resources/list` come back empty and the
 handshake stops advertising those capabilities — so **the tools carry the whole
 experience**.
+
+## Discovery reports, it never goes quiet
+
+Anything that keeps a directory from being served comes back in `skill_list`'s
+`problems`, with the path and the reason: no `SKILL.md`, frontmatter that will
+not parse, a name two directories both claim, a declared script that is not in
+the bundle, a symlink leading out of the root or out of a skill, a filename the
+read tools could not address. One bad skill costs itself and never the listing,
+and there is no third outcome where something is dropped in silence — a
+symlinked skill directory is **served** when it stays inside the root (so
+`skills/foo -> ../shared/foo` works) and **reported** when it does not.
 
 ## The execution fence
 
@@ -68,10 +87,18 @@ runs and **what it is handed**; each has its own test.
   inferred from the extension and never taken from the file's own shebang, since
   a file that can choose its own interpreter has already chosen its own program.
   **v1 runs `node` and nothing else** (see *What v1 cannot run*).
-- **Bounded.** A wall-clock timeout (60 s default, per-script override, hard
-  300 s ceiling), 1 MiB captured per stream with `truncated: true` rather than a
-  silent cut, one `skill_run` at a time, and the process **group** killed on
-  timeout so a grandchild does not outlive it.
+- **Bounded, and the call always returns.** A wall-clock timeout (60 s default,
+  per-script override, hard 300 s ceiling), 1 MiB captured per stream with
+  `truncated: true` rather than a silent cut, and one `skill_run` at a time. On
+  timeout the process **group** is signalled, which reaches the script and any
+  child that stayed in its group. It does **not** reach a grandchild that
+  detached into a group of its own, and such a grandchild also holds the stdio
+  pipes open — so the run settles on the process exiting plus a short drain,
+  under a hard deadline, rather than on the pipes closing. That is what
+  guarantees the tool call returns within its budget and frees the
+  one-at-a-time lock; it is not a guarantee that a deliberately detached
+  grandchild is dead. Bounding *that* is the tier's job (an unprivileged uid,
+  `prlimit` NPROC, and a machine that stops), not this adapter's.
 - **An env allowlist.** A script gets `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`,
   `MCP_DATA_DIR` when the host set one, and **exactly the variables that script
   asked for and the owner granted** — never this server's own environment. The
@@ -171,13 +198,30 @@ its instructions, and never the rest of the listing.
 | `MCP_SKILL_RUN` | optional JSON `[{skill, script, env?}]` — the owner's grant. **Narrow-only** |
 | *(neither set)* | this package's own `skills/` directory |
 
-`MCP_SKILL_RUN` deserves the emphasis. When it is absent, a skill's own
-declaration is the widest this server is. When it is present, what may run is
-the declaration **intersected** with it — a row naming a script the skill did
-not declare grants nothing (and is reported), and a row naming a variable the
-script did not ask for grants nothing. There is no spelling of it that makes
-something runnable which a skill did not declare, which is what makes it safe to
-read from an environment that also carries a registration's own variables.
+`MCP_SKILL_RUN` deserves the emphasis. When it is present, what may run is the
+declaration **intersected** with it — a row naming a script the skill did not
+declare grants nothing (and is reported), and a row naming a variable the script
+did not ask for grants nothing. There is no spelling of it that makes something
+runnable which a skill did not declare, which is what makes it safe to read from
+an environment that also carries a registration's own variables.
+
+**When it is absent, the default depends on who supplied the roots, and the
+hosted half is fail-closed.**
+
+- **Roots from `MCP_SKILLS_PATH`** (a host is injecting them, so there is a
+  registration and an owner behind this child): **nothing is granted and nothing
+  runs.** Every skill's instructions and files are still served — that is a
+  working, useful connector. The reason is that one child holds one environment
+  holding every credential the owner set, so a skill whose frontmatter named its
+  *neighbour's* variable would otherwise be handed the neighbour's credential
+  with nobody having decided to give it.
+- **Roots from `SKILLS_DIR`, or the packaged default**: the skill's own
+  declaration stands. Nothing is injecting anything, and the person who pointed
+  the server at a directory is the owner.
+
+`skill_list` reports which case it is (`grantFrom`, plus a `grantNote` in the
+hosted one) and lists a skill's declared-but-ungranted scripts, so "nothing
+runs" is never indistinguishable from "nothing was declared".
 
 ## Trust posture
 
@@ -194,9 +238,17 @@ read from an environment that also carries a registration's own variables.
 
 ## Hosting on mcp-host
 
-`mint.yaml` at the repo root says how this MCP wants to be registered. Three
+`mint.yaml` at the repo root says how this MCP wants to be registered. Four
 things it deliberately does **not** propose, because only a registration can
 decide them:
+
+- **The runtime — and it *could not*, by rule.** A manifest may never name one
+  (docs/MINT-MANIFEST.md §5): which tier a registration lands on is decided by
+  who is asking, not by the package, since a file that could ask for
+  `fly-shared` would be a stranger's package requesting a seat on the operator's
+  own machine. A hosted skill server belongs on the **isolated** tier
+  (`fly-machine`) with a declared egress policy, and that is the registration's
+  choice to make.
 
 - **The skills themselves.** They arrive as a pinned dependency (a
   `github-archive` naming a repository and an exact commit) and land in a

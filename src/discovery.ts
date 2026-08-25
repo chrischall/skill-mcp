@@ -16,11 +16,22 @@
  *    prevent. Here the first wins deterministically AND the collision is named.
  *
  * Nothing in this module reads a file's contents except SKILL.md, and nothing
- * follows a symlink out of a skill directory — the manifest walk is
- * `lstat`-based and skips every link it finds.
+ * follows a symlink out of a skill directory OR out of the configured root.
+ * That second half is a separate rule from the containment `paths.ts` applies,
+ * and it has to live HERE: `resolveInsideSkill` takes the skill's own directory
+ * as its containment root, so a skill directory that already escaped the root
+ * is contained in the wrong place and every later check happily agrees with it.
+ * Three entry points into the tree are therefore re-checked against the root's
+ * real path — a root's own `SKILL.md`, the `skills/` subdirectory, and every
+ * candidate directory — and a skill's `SKILL.md` is `lstat`ed before it is
+ * read, so a link out of the skill directory cannot serve another file's bytes
+ * as this skill's instructions. The manifest walk stays `lstat`-based and skips
+ * every link it finds.
  */
-import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, readdir, realpath, stat } from 'node:fs/promises';
 import { join, posix, basename } from 'node:path';
+import { isInside, relativePathProblem } from './paths.js';
+import { readCapped } from './read-capped.js';
 import {
   FrontmatterError,
   parseSkillMd,
@@ -88,6 +99,10 @@ export interface DiscoveryProblem {
     | 'name-mismatch'
     | 'unusable-name'
     | 'declared-script-missing'
+    /** A symlink led out of the configured root, or out of a skill directory. */
+    | 'symlink-escape'
+    /** A filename the read tools would refuse, so the manifest does not list it. */
+    | 'unusable-path'
     | 'file-limit'
     | 'skill-limit'
     /** The registration granted a script the skill does not declare (`grant.ts`). */
@@ -129,6 +144,12 @@ async function isFile(path: string): Promise<boolean> {
  * skill's file — or the child's own `$HOME` — as this skill's content.
  * `skill_file` applies the containment check separately, so a link that stays
  * inside the tree is still readable by its real path.
+ *
+ * It also applies the read tools' own SHAPE rule (`relativePathProblem`), and
+ * skipping there is REPORTED rather than silent: the manifest is what a client
+ * reads paths out of, so listing one `skill_file` and `resources/read` would
+ * then refuse advertises an address that does not work. A directory whose name
+ * fails the rule takes its whole subtree with it, once.
  */
 async function walkFiles(
   dir: string,
@@ -149,6 +170,15 @@ async function walkFiles(
     for (const entry of entries) {
       const childRel = rel === '' ? entry.name : posix.join(rel, entry.name);
       if (entry.isSymbolicLink()) continue;
+      const unusable = relativePathProblem(childRel);
+      if (unusable !== undefined) {
+        problems.push({
+          path: dir,
+          reason: 'unusable-path',
+          detail: `"${childRel}" cannot be addressed by skill_file (${unusable}), so it is not listed${entry.isDirectory() ? ' — nor is anything under it' : ''}`,
+        });
+        continue;
+      }
       if (entry.isDirectory()) {
         queue.push(childRel);
         continue;
@@ -184,16 +214,51 @@ async function readSkill(
 ): Promise<DiscoveredSkill | null> {
   const skillMd = join(dir, 'SKILL.md');
 
+  // `readFile` follows symlinks, so this check has to happen before it: a
+  // `SKILL.md -> ../../SECRET.md` would otherwise be served verbatim as this
+  // skill's instructions AND as its MCP prompt, with the out-of-tree
+  // frontmatter renaming the skill on the way past. `dir` is already a real
+  // path (the caller resolved it), so the comparison is sound.
+  const link = await lstat(skillMd).catch(() => null);
+  if (!link) {
+    problems.push({
+      path: dir,
+      reason: 'unreadable-skill-md',
+      detail: 'SKILL.md could not be stat\'d',
+    });
+    return null;
+  }
+  if (link.isSymbolicLink()) {
+    // Containment, not "no symlinks": a link that stays inside the skill is
+    // fine, and refusing those would break ordinary bundle layouts.
+    const target = await realpath(skillMd).catch(() => null);
+    if (target === null || !isInside(dir, target)) {
+      problems.push({
+        path: dir,
+        reason: 'symlink-escape',
+        detail: `SKILL.md is a symlink pointing outside this skill's own directory (${target ?? 'unresolvable'}); refused`,
+      });
+      return null;
+    }
+  } else if (!link.isFile()) {
+    problems.push({
+      path: dir,
+      reason: 'unreadable-skill-md',
+      detail: 'SKILL.md is not a regular file',
+    });
+    return null;
+  }
+
   let text: string;
   let truncated = false;
   try {
-    const raw = await readFile(skillMd);
-    if (raw.byteLength > MAX_SKILL_MD_BYTES) {
-      truncated = true;
-      text = raw.subarray(0, MAX_SKILL_MD_BYTES).toString('utf8');
-    } else {
-      text = raw.toString('utf8');
-    }
+    // A BOUNDED read, not a whole-file read that is sliced afterwards. This
+    // runs at BOOT, so an unbounded one turns a hostile SKILL.md into a child
+    // that cannot start — the exact opposite of the deferred-config-error
+    // pattern this module exists to hold up (read-capped.ts).
+    const read = await readCapped(skillMd, MAX_SKILL_MD_BYTES);
+    truncated = read.truncated;
+    text = read.bytes.toString('utf8');
   } catch (err) {
     problems.push({
       path: dir,
@@ -271,8 +336,36 @@ async function readSkill(
   };
 }
 
-/** Candidate skill directories under one root, in a stable order. */
-async function candidates(root: string): Promise<{ dirs: string[]; nonSkill: string[] }> {
+/**
+ * The real path of `path`, but only if it is still inside `root`. `null`
+ * otherwise, which every caller treats as "do not go there".
+ */
+async function realInside(root: string, path: string): Promise<string | null> {
+  const real = await realpath(path).catch(() => null);
+  if (real === null || !isInside(root, real)) return null;
+  return real;
+}
+
+/**
+ * Candidate skill directories under one root, in a stable order.
+ *
+ * `root` is already a real path. Every directory returned is a real path
+ * inside it: the `skills/` subdirectory is resolved and checked BEFORE it is
+ * scanned (so an escaping one is refused rather than merely reported per
+ * candidate), and each candidate is resolved and checked again.
+ *
+ * A symlinked entry gets TWO outcomes, never a silent third. `readdir`'s
+ * dirents are `lstat`-based, so `skills/foo -> …` is not a directory here and
+ * used to fall out of the scan reported as nothing at all — which is wrong both
+ * ways round: `skills/foo -> ../shared/foo` is an ordinary way to assemble a
+ * bundle and its owner saw an empty connector, while `skills/foo -> /outside`
+ * was refused with no reason given. So a link is resolved, served when
+ * `realInside` holds and reported as `symlink-escape` when it does not.
+ */
+async function candidates(
+  root: string,
+  problems: DiscoveryProblem[],
+): Promise<{ dirs: string[]; nonSkill: string[] }> {
   const dirs: string[] = [];
   const nonSkill: string[] = [];
 
@@ -286,16 +379,59 @@ async function candidates(root: string): Promise<{ dirs: string[]; nonSkill: str
       return;
     }
     for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+      if (entry.name.startsWith('.')) continue;
+      const link = entry.isSymbolicLink();
+      if (!entry.isDirectory() && !link) continue;
+
       const dir = join(parent, entry.name);
-      if (await isFile(join(dir, 'SKILL.md'))) dirs.push(dir);
-      else if (parent === root && entry.name === 'skills') continue;
-      else nonSkill.push(dir);
+      // `<root>/skills` is resolved and reported by the dedicated block below;
+      // reporting it here too would name one escape twice.
+      const deferred = parent === root && entry.name === 'skills';
+
+      // Resolved in two steps rather than through `realInside`, so a BROKEN
+      // link is not reported as an escape: both are refused, and telling their
+      // owner which one they have is the whole point of reporting at all.
+      const real = await realpath(dir).catch(() => null);
+      if (real === null || !isInside(root, real)) {
+        if (!deferred) {
+          problems.push({
+            path: dir,
+            reason: 'symlink-escape',
+            detail:
+              real === null
+                ? 'this entry could not be resolved — a broken symlink, or one whose target is unreadable; refused'
+                : link
+                  ? 'this entry is a symlink resolving outside the configured root; refused'
+                  : 'this directory resolves outside the configured root; refused',
+          });
+        }
+        continue;
+      }
+      // A link may point at a file; that is not a candidate skill directory and
+      // never was — plain files are skipped here without comment.
+      if (link && !(await isDirectory(real))) continue;
+
+      if (await isFile(join(real, 'SKILL.md'))) dirs.push(real);
+      else if (deferred) continue;
+      else nonSkill.push(real);
     }
   };
 
   await scan(root);
-  if (await isDirectory(join(root, 'skills'))) await scan(join(root, 'skills'));
+
+  const skillsDir = join(root, 'skills');
+  if (await isDirectory(skillsDir)) {
+    const real = await realInside(root, skillsDir);
+    if (real === null) {
+      problems.push({
+        path: skillsDir,
+        reason: 'symlink-escape',
+        detail: 'the "skills" directory resolves outside the configured root; refused',
+      });
+    } else {
+      await scan(real);
+    }
+  }
 
   return { dirs, nonSkill };
 }
@@ -325,7 +461,7 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
       continue;
     }
 
-    const { dirs, nonSkill } = await candidates(realRoot);
+    const { dirs, nonSkill } = await candidates(realRoot, problems);
     for (const dir of nonSkill) {
       problems.push({
         path: dir,

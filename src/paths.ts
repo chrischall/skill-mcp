@@ -37,40 +37,59 @@ export class PathRefusedError extends McpToolError {
 const MAX_PATH_LENGTH = 1024;
 
 /**
- * The string check. Returns the path unchanged when it is a plain relative
- * path of ordinary segments; throws {@link PathRefusedError} otherwise.
+ * Why this path is not addressable, or `undefined` when it is.
+ *
+ * The same rule {@link checkRelativePath} enforces, without the throw, because
+ * the MANIFEST has to apply it too: discovery lists a skill's files and the read
+ * tools resolve them, and a path listed by one and refused by the other is an
+ * inconsistency the caller cannot act on. One function, two callers, so the two
+ * cannot drift.
  *
  * Deliberately a positive rule rather than a list of bad substrings: every
- * segment must match `SEGMENT`, which is why `%2e%2e`, `C:\…`, a trailing
- * slash and an embedded NUL are all refused without being enumerated.
+ * segment must be a plain one, which is why `%2e%2e`, `C:\…`, a trailing slash
+ * and an embedded NUL are all refused without being enumerated.
  */
-export function checkRelativePath(path: string): string {
-  const shown = path.length > 120 ? `${path.slice(0, 120)}…` : path;
-  const refuse = (why: string): never => {
-    throw new PathRefusedError(
-      `path ${JSON.stringify(shown)} is not usable: ${why}`,
-      'Paths are relative to the skill\'s own directory: plain segments separated by "/", no leading "/", no "." or ".." segment. Call skill_load to see the exact paths this skill bundles.',
-    );
-  };
+export function relativePathProblem(path: string): string | undefined {
+  if (typeof path !== 'string' || path.length === 0) return 'it is empty';
+  if (path.length > MAX_PATH_LENGTH) return `it is longer than ${MAX_PATH_LENGTH} characters`;
+  if (path.includes('\0')) return 'it contains a NUL byte';
+  if (path.includes('\\')) return 'it contains a backslash';
+  if (path.includes('%')) return 'it contains a percent escape';
 
-  if (typeof path !== 'string' || path.length === 0) refuse('it is empty');
-  if (path.length > MAX_PATH_LENGTH) refuse(`it is longer than ${MAX_PATH_LENGTH} characters`);
-  if (path.includes('\0')) refuse('it contains a NUL byte');
-  if (path.includes('\\')) refuse('it contains a backslash');
-  if (path.includes('%')) refuse('it contains a percent escape');
-
-  const segments = path.split('/');
-  for (const segment of segments) {
-    if (segment.length === 0) refuse('it has an empty segment (leading, trailing or doubled "/")');
-    if (segment === '.' || segment === '..') refuse(`it has a "${segment}" segment`);
-    if (segment.trim().length === 0) refuse('it has a whitespace-only segment');
+  for (const segment of path.split('/')) {
+    if (segment.length === 0) return 'it has an empty segment (leading, trailing or doubled "/")';
+    if (segment === '.' || segment === '..') return `it has a "${segment}" segment`;
+    if (segment.trim().length === 0) return 'it has a whitespace-only segment';
   }
 
-  return path;
+  return undefined;
 }
 
-/** True when `candidate` is `root` itself or lives underneath it. */
-function isInside(root: string, candidate: string): boolean {
+/**
+ * The string check. Returns the path unchanged when it is a plain relative
+ * path of ordinary segments; throws {@link PathRefusedError} otherwise.
+ */
+export function checkRelativePath(path: string): string {
+  const why = relativePathProblem(path);
+  if (why === undefined) return path;
+
+  const shown = path.length > 120 ? `${path.slice(0, 120)}…` : path;
+  throw new PathRefusedError(
+    `path ${JSON.stringify(shown)} is not usable: ${why}`,
+    'Paths are relative to the skill\'s own directory: plain segments separated by "/", no leading "/", no "." or ".." segment. Call skill_load to see the exact paths this skill bundles.',
+  );
+}
+
+/**
+ * True when `candidate` is `root` itself or lives underneath it.
+ *
+ * BOTH arguments must already be real paths — this compares strings and
+ * follows nothing. Exported because discovery needs the identical rule against
+ * a different root: `resolveInsideSkill` takes the SKILL's directory as its
+ * containment root, so a skill directory that escaped the configured root is
+ * "contained" in the wrong place and every later check agrees with it.
+ */
+export function isInside(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
