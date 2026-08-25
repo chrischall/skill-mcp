@@ -14,9 +14,47 @@ import { MAX_SKILL_MD_BYTES } from '../discovery.js';
 import { MAX_ARGS, interpreterNames, isRunnableInterpreter, runDeclaredScript } from '../run.js';
 import { resolveInsideSkill } from '../paths.js';
 import { readCapped } from '../read-capped.js';
+import { stat } from 'node:fs/promises';
 
 /** Largest file `skill_file` returns (docs/SKILL-MCP.md §2.1). */
 export const MAX_FILE_BYTES = 1024 * 1024;
+
+/** Most paths one `skill_file` call may name (docs/SKILL-MCP.md §2.1). */
+export const MAX_FILE_PATHS = 8;
+
+/**
+ * Most bytes one `skill_file` call may SERVE, across every entry.
+ *
+ * Without it the per-file cap is defeated by multiplication: eight 1 MiB files
+ * base64 to an ~11 MiB frame built in this child's heap, which is exactly what
+ * the per-file cap exists to prevent (docs/SKILL-MCP.md §2.1).
+ */
+export const MAX_BATCH_BYTES = 4 * 1024 * 1024;
+
+/** One planned read of a batch: resolved and sized, or refused with a reason. */
+interface PlannedRead {
+  path: string;
+  /** Absent when this entry was refused; its `error` says why. */
+  target?: string;
+  /** Bytes this entry would contribute to the batch total. Absent when refused. */
+  served?: number;
+  error?: string;
+}
+
+/**
+ * What this file would actually COST the batch: its size, capped at what a
+ * single entry may return.
+ *
+ * `min`, because a file over the per-file cap is TRUNCATED to it rather than
+ * refused — so its full size is not what the call would serve, and summing it
+ * would refuse batches that comfortably fit. `resolveInsideSkill` has already
+ * lstat'd this path and refused anything that is not a regular file, so this
+ * stat is asking for a number and not for a verdict.
+ */
+async function servedBytes(target: string): Promise<number> {
+  const st = await stat(target);
+  return Math.min(st.size, MAX_FILE_BYTES);
+}
 
 const NameArg = z
   .string()
@@ -27,6 +65,15 @@ const PathArg = z
   .string()
   .min(1)
   .describe('A path relative to the skill\'s own directory, as skill_load lists it.');
+
+const PathsArg = z
+  .array(PathArg)
+  .min(1)
+  .max(MAX_FILE_PATHS)
+  .describe(
+    `Up to ${MAX_FILE_PATHS} paths relative to the skill's own directory, as skill_load lists them. ` +
+      'Reading a SKILL.md\'s referenced files in one call costs one round trip instead of one each.',
+  );
 
 /**
  * Extension → media type, for the handful a skill bundle actually carries.
@@ -216,35 +263,82 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     'skill_file',
     {
       description:
-        "Read one file a skill bundles. The path is relative to that skill's own directory; text comes back as text, anything else as base64 with its media type.",
-      annotations: toolAnnotations({ title: 'Read a skill file', readOnly: true, idempotent: true }),
-      inputSchema: { name: NameArg, path: PathArg },
+        "Read files a skill bundles. Paths are relative to that skill's own directory; text comes back as text, anything else as base64 with its media type. Ask for every file you need in ONE call — a SKILL.md usually points at several.",
+      annotations: toolAnnotations({ title: 'Read skill files', readOnly: true, idempotent: true }),
+      inputSchema: { name: NameArg, paths: PathsArg },
     },
-    async ({ name, path }) => {
+    async ({ name, paths }) => {
       const skill = requireSkill(deps, name);
-      // Both halves of the containment check live in resolveInsideSkill: a read
-      // is not less dangerous than an execution here.
-      const target = await resolveInsideSkill(skill.dir, path);
 
-      // BOUNDED, not read-whole-then-slice: the cap exists to keep a bundled
-      // file out of this child's heap (docs/SKILL-MCP.md §2.1), and a hosted
-      // child has RLIMIT_DATA 256 MiB hard while §5.3 permits a 256 MiB bundle
-      // — so a slice after the fact bounds the frame and kills the server.
-      const { bytes, size, truncated } = await readCapped(target, MAX_FILE_BYTES);
-      const text = isUtf8Text(bytes);
+      // PASS 1 — resolve and size every path before reading a byte of any of
+      // them, because the batch total is decided from what would be SERVED
+      // (docs/SKILL-MCP.md §2.1). Deciding it while accumulating would make the
+      // answer depend on the order the caller happened to list the paths in.
+      //
+      // A path that cannot be resolved is that ENTRY's error and not the
+      // batch's: a client reading the four files a SKILL.md names, one of which
+      // the author has since renamed, still gets the other three.
+      const planned = await Promise.all(
+        paths.map(async (path): Promise<PlannedRead> => {
+          try {
+            // Both halves of the containment check live in resolveInsideSkill:
+            // a read is not less dangerous than an execution here. It runs per
+            // path — batching changes how many arrive, never what one may name.
+            const target = await resolveInsideSkill(skill.dir, path);
+            return { path, target, served: await servedBytes(target) };
+          } catch (err) {
+            return { path, error: err instanceof Error ? err.message : String(err) };
+          }
+        }),
+      );
 
-      return textResult({
-        skill: skill.name,
-        path,
-        size,
-        mediaType: mediaTypeFor(path),
-        encoding: text ? 'utf-8' : 'base64',
-        truncated,
-        ...(truncated
-          ? { truncationNote: `The file is ${size} bytes; the first ${MAX_FILE_BYTES} are returned.` }
-          : {}),
-        content: text ? bytes.toString('utf8') : bytes.toString('base64'),
-      });
+      const planning = planned.reduce((total, entry) => total + (entry.served ?? 0), 0);
+      if (planning > MAX_BATCH_BYTES) {
+        // The one bound with no per-entry slot to report it in: the call as a
+        // whole blew the budget and no single entry is the reason.
+        throw new McpToolError(
+          `those ${paths.length} paths would return ${planning} bytes, over this call's ${MAX_BATCH_BYTES}-byte limit`,
+          {
+            hint: 'Ask for fewer files in one call, or read the largest on its own. skill_load lists every file with its size.',
+          },
+        );
+      }
+
+      // PASS 2 — read. BOUNDED, not read-whole-then-slice: the cap exists to
+      // keep a bundled file out of this child's heap, and a hosted child has
+      // RLIMIT_DATA 256 MiB hard while §5.3 permits a 256 MiB bundle — so a
+      // slice after the fact bounds the frame and kills the server.
+      const files = await Promise.all(
+        planned.map(async (entry) => {
+          if (entry.target === undefined) return { path: entry.path, error: entry.error };
+          try {
+            const { bytes, size, truncated } = await readCapped(entry.target, MAX_FILE_BYTES);
+            const text = isUtf8Text(bytes);
+            return {
+              path: entry.path,
+              size,
+              mediaType: mediaTypeFor(entry.path),
+              encoding: text ? 'utf-8' : 'base64',
+              // Reported rather than cut silently, per ENTRY, so a batch says
+              // WHICH of its reads was cut.
+              truncated,
+              ...(truncated
+                ? {
+                    truncationNote: `The file is ${size} bytes; the first ${MAX_FILE_BYTES} are returned.`,
+                  }
+                : {}),
+              content: text ? bytes.toString('utf8') : bytes.toString('base64'),
+            };
+          } catch (err) {
+            return { path: entry.path, error: err instanceof Error ? err.message : String(err) };
+          }
+        }),
+      );
+
+      // IN REQUEST ORDER (docs/SKILL-MCP.md §2.1): Promise.all preserves it, so
+      // a caller pairs entry N with the path it asked for at N rather than
+      // matching on the string.
+      return textResult({ skill: skill.name, files });
     },
   );
 

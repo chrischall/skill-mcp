@@ -12,7 +12,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { createDeps } from '../src/deps.js';
-import { registerSkillTools, mediaTypeFor, MAX_FILE_BYTES } from '../src/tools/skills.js';
+import {
+  registerSkillTools,
+  mediaTypeFor,
+  MAX_FILE_BYTES,
+  MAX_FILE_PATHS,
+  MAX_BATCH_BYTES,
+} from '../src/tools/skills.js';
 
 let root = '';
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
@@ -202,36 +208,102 @@ describe('skill_load', () => {
   });
 });
 
+/** One entry of a `skill_file` batch, as the tool returns it. */
+interface FileEntry {
+  path: string;
+  size?: number;
+  mediaType?: string;
+  encoding?: string;
+  truncated?: boolean;
+  content?: string;
+  error?: string;
+}
+
+const readFiles = async (name: string, paths: string[]): Promise<FileEntry[]> =>
+  parseToolResult<{ files: FileEntry[] }>(await harness.callTool('skill_file', { name, paths }))
+    .files;
+
 describe('skill_file', () => {
   it('returns a text file as text', async () => {
-    const body = parseToolResult<{ encoding: string; content: string }>(
-      await harness.callTool('skill_file', { name: 'demo', path: 'references/notes.md' }),
-    );
-    expect(body.encoding).toBe('utf-8');
-    expect(body.content).toBe('Some notes.\n');
+    const [entry] = await readFiles('demo', ['references/notes.md']);
+    expect(entry!.encoding).toBe('utf-8');
+    expect(entry!.content).toBe('Some notes.\n');
   });
 
   it('returns a binary file as base64 with its media type', async () => {
-    const body = parseToolResult<{ encoding: string; mediaType: string; content: string }>(
-      await harness.callTool('skill_file', { name: 'demo', path: 'references/pixel.png' }),
-    );
-    expect(body.encoding).toBe('base64');
-    expect(body.mediaType).toBe('image/png');
-    expect(Buffer.from(body.content, 'base64').equals(PNG)).toBe(true);
+    const [entry] = await readFiles('demo', ['references/pixel.png']);
+    expect(entry!.encoding).toBe('base64');
+    expect(entry!.mediaType).toBe('image/png');
+    expect(Buffer.from(entry!.content!, 'base64').equals(PNG)).toBe(true);
   });
 
   it('refuses a path that leaves the skill directory', async () => {
-    const result = await harness.callTool('skill_file', { name: 'demo', path: '../plain/SKILL.md' });
+    // Per ENTRY, not as a failed call: the refusal is the path's, and a sibling
+    // read in the same batch is unaffected by it.
+    const [escaped, sibling] = await readFiles('demo', [
+      '../plain/SKILL.md',
+      'references/notes.md',
+    ]);
+    // The STRING check fires first and names the reason, so this never reaches
+    // the resolve — which is the order paths.ts documents.
+    expect(escaped!.error).toMatch(/".." segment/);
+    expect(escaped!.content).toBeUndefined();
+    expect(sibling!.content).toBe('Some notes.\n');
+  });
+
+  it('reads several files in ONE call, in the order they were asked for', async () => {
+    // The reason the tool takes a list at all: a SKILL.md points at several
+    // files, and a caller pairs entry N with the path it asked for at N.
+    const entries = await readFiles('demo', ['references/pixel.png', 'references/notes.md']);
+    expect(entries.map((e) => e.path)).toEqual(['references/pixel.png', 'references/notes.md']);
+    expect(entries[0]!.encoding).toBe('base64');
+    expect(entries[1]!.content).toBe('Some notes.\n');
+  });
+
+  it('reports a missing file as that entry\'s error and still serves the rest', async () => {
+    const [missing, present] = await readFiles('demo', ['references/gone.md', 'references/notes.md']);
+    expect(missing!.error).toMatch(/not a file in this skill/);
+    expect(present!.content).toBe('Some notes.\n');
+  });
+
+  it('refuses more paths than the per-call limit', async () => {
+    const tooMany = Array.from({ length: MAX_FILE_PATHS + 1 }, () => 'references/notes.md');
+    const result = await harness.callTool('skill_file', { name: 'demo', paths: tooMany });
     expect(result.isError).toBe(true);
   });
 
+  it('refuses a batch whose reads would exceed the call total, before reading any of them', async () => {
+    // Four capped reads of the huge file plan 4 MiB, which is the total; five
+    // plan 5 MiB and must be refused WHOLE — there is no per-entry slot for a
+    // budget the call as a whole blew. Sizing is from stat, so nothing is read.
+    const under = await harness.callTool('skill_file', {
+      name: 'bulky',
+      paths: Array.from({ length: 4 }, () => 'huge.bin'),
+    });
+    expect(under.isError).not.toBe(true);
+
+    const over = await harness.callTool('skill_file', {
+      name: 'bulky',
+      paths: Array.from({ length: 5 }, () => 'huge.bin'),
+    });
+    expect(over.isError).toBe(true);
+    expect(JSON.stringify(over)).toMatch(/over this call's/);
+  });
+
+  it('sizes the batch by what it would SERVE, not by the files\' real sizes', async () => {
+    // huge.bin is HUGE_BYTES on disk and MAX_FILE_BYTES served. Summing the
+    // real sizes would refuse this call; summing the served bytes admits it.
+    expect(HUGE_BYTES * 4).toBeGreaterThan(MAX_BATCH_BYTES);
+    const entries = await readFiles('bulky', Array.from({ length: 4 }, () => 'huge.bin'));
+    expect(entries).toHaveLength(4);
+    expect(entries.every((e) => e.truncated === true)).toBe(true);
+  });
+
   it('caps a huge file, reports the truncation, and names the real size', async () => {
-    const body = parseToolResult<{ size: number; truncated: boolean; content: string }>(
-      await harness.callTool('skill_file', { name: 'bulky', path: 'huge.bin' }),
-    );
-    expect(body.size).toBe(HUGE_BYTES);
-    expect(body.truncated).toBe(true);
-    expect(Buffer.from(body.content, 'base64').byteLength).toBe(MAX_FILE_BYTES);
+    const [entry] = await readFiles('bulky', ['huge.bin']);
+    expect(entry!.size).toBe(HUGE_BYTES);
+    expect(entry!.truncated).toBe(true);
+    expect(Buffer.from(entry!.content!, 'base64').byteLength).toBe(MAX_FILE_BYTES);
   });
 
   it('ALLOCATES no more than the cap while serving that read', async () => {
@@ -246,7 +318,7 @@ describe('skill_file', () => {
     const timer = setInterval(sample, 2);
     let result;
     try {
-      result = await harness.callTool('skill_file', { name: 'bulky', path: 'huge.bin' });
+      result = await harness.callTool('skill_file', { name: 'bulky', paths: ['huge.bin'] });
     } finally {
       clearInterval(timer);
     }

@@ -52,28 +52,41 @@ describe('skill_load', () => {
   });
 });
 
+interface CappedEntry {
+  truncated: boolean;
+  size: number;
+  encoding: string;
+  content: string;
+  truncationNote?: string;
+}
+
+const read = async (name: string, paths: string[]): Promise<CappedEntry[]> =>
+  parseToolResult<{ files: CappedEntry[] }>(await harness.callTool('skill_file', { name, paths }))
+    .files;
+
 describe('skill_file', () => {
   it('caps a file and REPORTS the truncation, with the real size', async () => {
-    const body = parseToolResult<{
-      truncated: boolean;
-      size: number;
-      encoding: string;
-      content: string;
-      truncationNote?: string;
-    }>(await harness.callTool('skill_file', { name: 'big', path: 'huge.bin' }));
+    const [entry] = await read('big', ['huge.bin']);
 
-    expect(body.truncated).toBe(true);
-    expect(body.size).toBe(MAX_FILE_BYTES + 4096);
-    expect(body.encoding).toBe('base64');
-    expect(Buffer.from(body.content, 'base64').byteLength).toBe(MAX_FILE_BYTES);
-    expect(body.truncationNote).toContain(String(MAX_FILE_BYTES));
+    expect(entry!.truncated).toBe(true);
+    expect(entry!.size).toBe(MAX_FILE_BYTES + 4096);
+    expect(entry!.encoding).toBe('base64');
+    expect(Buffer.from(entry!.content, 'base64').byteLength).toBe(MAX_FILE_BYTES);
+    expect(entry!.truncationNote).toContain(String(MAX_FILE_BYTES));
   });
 
   it('does not claim truncation for a file that fits', async () => {
-    const body = parseToolResult<{ truncated: boolean; content: string }>(
-      await harness.callTool('skill_file', { name: 'big', path: 'small.txt' }),
-    );
-    expect(body.truncated).toBe(false);
-    expect(body.content).toBe('fits\n');
+    const [entry] = await read('big', ['small.txt']);
+    expect(entry!.truncated).toBe(false);
+    expect(entry!.content).toBe('fits\n');
+  });
+
+  it('reports truncation PER ENTRY, so a batch says which read was cut', async () => {
+    // The whole point of a per-entry flag: a batch that reported one
+    // `truncated` for the call could not say which file it referred to.
+    const [huge, small] = await read('big', ['huge.bin', 'small.txt']);
+    expect(huge!.truncated).toBe(true);
+    expect(small!.truncated).toBe(false);
+    expect(small!.content).toBe('fits\n');
   });
 });
