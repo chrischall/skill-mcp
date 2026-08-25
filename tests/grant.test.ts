@@ -1,0 +1,121 @@
+/**
+ * The owner's grant.
+ *
+ * docs/SKILL-MCP.md §7 puts the authority on the REGISTRATION: the skill's own
+ * declaration narrows, the owner grants, and the stored row is what the adapter
+ * reads. SKILL-1's design does not name the channel that carries the row to the
+ * child (only `MCP_SKILLS_PATH` is specified), so this adapter reads an
+ * optional `MCP_SKILL_RUN` and — the property that makes an unspecified
+ * channel safe — treats it as NARROW-ONLY. Absent means the declaration
+ * stands; present means the declaration intersected with it. There is no
+ * spelling of this variable that makes something runnable which the skill did
+ * not declare, so an owner who sets it in a registration's plain `env` can only
+ * ever reduce what runs.
+ */
+import { describe, it, expect } from 'vitest';
+import { GrantError, parseGrant, applyGrant } from '../src/grant.js';
+import type { Catalog } from '../src/discovery.js';
+
+const catalog = (): Catalog => ({
+  roots: ['/slots/a'],
+  skills: [
+    {
+      name: 'weather',
+      dir: '/slots/a/weather',
+      root: '/slots/a',
+      body: 'x',
+      bodyTruncated: false,
+      files: [],
+      scripts: [
+        { script: 'scripts/forecast.js', interpreter: 'node', env: ['WEATHER_API_KEY', 'EXTRA'], timeoutMs: 60_000 },
+        { script: 'scripts/geocode.js', interpreter: 'node', env: [], timeoutMs: 60_000 },
+      ],
+      declaration: {
+        run: [
+          { script: 'scripts/forecast.js', interpreter: 'node', env: ['WEATHER_API_KEY', 'EXTRA'], timeoutMs: 60_000 },
+          { script: 'scripts/geocode.js', interpreter: 'node', env: [], timeoutMs: 60_000 },
+        ],
+        env: [],
+        egress: [],
+        problems: [],
+      },
+    },
+  ],
+  problems: [],
+});
+
+describe('parseGrant', () => {
+  it('is absent when the variable is unset or blank', () => {
+    expect(parseGrant(undefined)).toBeUndefined();
+    expect(parseGrant('   ')).toBeUndefined();
+  });
+
+  it('reads a list of skill/script/env rows', () => {
+    const grant = parseGrant('[{"skill":"weather","script":"scripts/forecast.js","env":["WEATHER_API_KEY"]}]');
+    expect(grant?.entries).toEqual([
+      { skill: 'weather', script: 'scripts/forecast.js', env: ['WEATHER_API_KEY'] },
+    ]);
+  });
+
+  it('refuses malformed JSON rather than silently granting everything', () => {
+    expect(() => parseGrant('{not json')).toThrow(GrantError);
+  });
+
+  it('refuses a row that is not a skill/script pair', () => {
+    expect(() => parseGrant('[{"skill":"weather"}]')).toThrow(GrantError);
+  });
+
+  it('accepts an empty list, which grants nothing', () => {
+    expect(parseGrant('[]')?.entries).toEqual([]);
+  });
+});
+
+describe('applyGrant', () => {
+  it('leaves the declaration alone when there is no grant', () => {
+    const applied = applyGrant(catalog(), undefined);
+    expect(applied.skills[0]?.scripts.map((s) => s.script)).toEqual([
+      'scripts/forecast.js',
+      'scripts/geocode.js',
+    ]);
+  });
+
+  it('keeps only the declared scripts the grant names', () => {
+    const applied = applyGrant(
+      catalog(),
+      parseGrant('[{"skill":"weather","script":"scripts/geocode.js"}]'),
+    );
+    expect(applied.skills[0]?.scripts.map((s) => s.script)).toEqual(['scripts/geocode.js']);
+  });
+
+  it('intersects the env request with the grant, never unions it', () => {
+    const applied = applyGrant(
+      catalog(),
+      parseGrant(
+        '[{"skill":"weather","script":"scripts/forecast.js","env":["WEATHER_API_KEY","NEIGHBOUR_KEY"]}]',
+      ),
+    );
+    expect(applied.skills[0]?.scripts[0]?.env).toEqual(['WEATHER_API_KEY']);
+  });
+
+  it('cannot make a script runnable that the skill never declared', () => {
+    const applied = applyGrant(
+      catalog(),
+      parseGrant('[{"skill":"weather","script":"scripts/evil.js"}]'),
+    );
+    expect(applied.skills[0]?.scripts).toEqual([]);
+    expect(applied.problems.find((p) => p.reason === 'grant')?.detail).toContain('scripts/evil.js');
+  });
+
+  it('an empty grant makes the registration execute nothing', () => {
+    const applied = applyGrant(catalog(), parseGrant('[]'));
+    expect(applied.skills[0]?.scripts).toEqual([]);
+  });
+
+  it('leaves the declaration itself readable, so skill_list can show what was NOT granted', () => {
+    const applied = applyGrant(
+      catalog(),
+      parseGrant('[{"skill":"weather","script":"scripts/geocode.js"}]'),
+    );
+    expect(applied.skills[0]?.declaration.run).toHaveLength(2);
+  });
+});

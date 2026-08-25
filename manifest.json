@@ -1,0 +1,64 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/dxt/main/dist/mcpb-manifest.schema.json",
+  "manifest_version": "0.3",
+  "name": "skill-mcp",
+  "display_name": "Skills",
+  "version": "0.0.0",
+  "description": "Serves a directory of Agent Skills over MCP — list them, load their instructions, read their bundled files, and run only the scripts a skill declares",
+  "author": {
+    "name": "Chris Chall",
+    "email": "chris.c.hall@gmail.com",
+    "url": "https://github.com/chrischall"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chrischall/skill-mcp"
+  },
+  "homepage": "https://github.com/chrischall/skill-mcp",
+  "support": "https://github.com/chrischall/skill-mcp/issues",
+  "license": "MIT",
+  "keywords": ["skills", "agent-skills", "adapter", "mcp"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/bundle.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/bundle.js"],
+      "env": {
+        "SKILLS_DIR": "${user_config.skills_dir}"
+      }
+    }
+  },
+  "user_config": {
+    "skills_dir": {
+      "type": "string",
+      "title": "Skills directory",
+      "description": "Directory holding your skills (a directory of <name>/SKILL.md, or one skill's own directory). Several may be given, separated by ':'. Leave blank to serve the example skill bundled with this server.",
+      "required": false,
+      "sensitive": false
+    }
+  },
+  "tools": [
+    {
+      "name": "skill_list",
+      "description": "List every skill found, with its description, file count and the exact scripts that may be run"
+    },
+    {
+      "name": "skill_load",
+      "description": "Load one skill's SKILL.md instructions verbatim, plus a manifest of its bundled files"
+    },
+    {
+      "name": "skill_file",
+      "description": "Read one file a skill bundles, resolved inside that skill's own directory"
+    },
+    {
+      "name": "skill_run",
+      "description": "Execute a script the skill declares as runnable, with an argument array"
+    }
+  ],
+  "compatibility": {
+    "runtimes": {
+      "node": ">=22.5"
+    }
+  }
+}

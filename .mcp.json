@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "skill": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
+      "env": {
+        "SKILLS_DIR": "${SKILLS_DIR}"
+      }
+    }
+  }
+}

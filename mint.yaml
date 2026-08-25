@@ -1,0 +1,54 @@
+# How this MCP wants to be hosted on mcp-host (docs/MINT-MANIFEST.md there).
+#
+# It PROPOSES; it never applies. Nothing in this file is covered by the
+# tarball's integrity check, so nothing here reaches a child until an owner has
+# reviewed it and saved a registration.
+#
+# Read the three deliberate ABSENCES below with the keys — for this MCP they
+# carry as much as what is here, and each is a thing only a registration can
+# decide.
+version: 1
+name: Skills
+slug: skills
+summary: Serves a directory of Agent Skills — instructions, bundled files, and only the scripts a skill declares.
+
+# The adapter itself reaches no host on the internet: it reads a directory the
+# runner hands it and executes declared scripts. An empty allowlist is the
+# deny-by-default answer, and it is a real value rather than a placeholder —
+# `null` would mean unrestricted, and an allowlist that allows everything is
+# not one.
+#
+# WHAT ONLY A REGISTRATION CAN SET: the hosts the SKILLS need. A skill declares
+# them in its own `mcp-host.egress` block, the preview shows them with who
+# declared them, and the owner accepts them. This file cannot know which skills
+# a given registration will carry, so proposing a host here would be a guess
+# with an author's authority behind it.
+egress:
+  allow: []
+
+# NOT PROPOSED, deliberately:
+#
+# 1. `state.dataDir` — the adapter caches nothing. It scans the skills once at
+#    boot, holds the catalog in memory, and writes no file anywhere; losing a
+#    machine loses nothing it owns. Turn it on for a registration whose skills'
+#    SCRIPTS need somewhere to write, and give the reason there: the bundle slot
+#    is read-only, so `MCP_DATA_DIR` (with it on) or `TMPDIR` (without) is where
+#    a script's output goes. That is a fact about the skills, not about this
+#    server, which is why the flag is not asked for here.
+#
+# 2. `env` — this server reads no credential of its own. Its `SKILLS_DIR` is for
+#    running it from a terminal; when hosted, the runner injects
+#    `MCP_SKILLS_PATH`, which is a RESERVED name a registration may not set,
+#    because re-pointing it aims the adapter at any directory on the machine.
+#    A registration's env holds what the SKILLS need, and each skill proposes
+#    its own fields in its own frontmatter.
+#
+# 3. `dependencies` — the skills themselves arrive as a pinned dependency
+#    (`github-archive` today), which names a specific repository and commit.
+#    That is the registration's content, not this package's, so it belongs on
+#    the registration and never in this file.
+#
+# 4. `tools.enable` — narrowing to `[skill_list, skill_load, skill_file]` is the
+#    non-executable switch, enforced at the gateway rather than by this server,
+#    and it costs the prompt and resource surfaces entirely. A real choice for a
+#    registration to make; not a default to bake in.
