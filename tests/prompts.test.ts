@@ -30,6 +30,9 @@ beforeAll(async () => {
     '---\nname: demo\ndescription: A fixture skill.\n---\n# Demo\n\nInstructions here.\n',
   );
   await writeFile(join(demo, 'references', 'notes.md'), 'Some notes.\n');
+  // Invalid UTF-8, no NUL byte: the case a NUL test calls text and a UTF-8
+  // round-trip calls binary.
+  await writeFile(join(demo, 'references', 'latin1.txt'), Buffer.from([0xff, 0xfe, 0x41]));
 
   const deps = await createDeps({ MCP_SKILLS_PATH: root });
   server = new McpServer({ name: 'test', version: '0.0.0' });
@@ -65,13 +68,34 @@ describe('resources', () => {
   it('registers each bundled file under skill://<name>/<path>', async () => {
     const { resources } = await client.listResources();
     const uris = resources.map((r) => r.uri).sort();
-    expect(uris).toEqual(['skill://demo/SKILL.md', 'skill://demo/references/notes.md']);
+    expect(uris).toEqual([
+      'skill://demo/SKILL.md',
+      'skill://demo/references/latin1.txt',
+      'skill://demo/references/notes.md',
+    ]);
   });
 
   it('reads a bundled file through its resource URI', async () => {
     const result = await client.readResource({ uri: 'skill://demo/references/notes.md' });
     const contents = result.contents[0];
     expect(contents && 'text' in contents ? contents.text : '').toBe('Some notes.\n');
+  });
+
+  /*
+   * The projection is a second DOOR onto the same bytes, so the two doors have
+   * to agree about what those bytes are. A NUL-byte test says "binary" about
+   * everything except the file that matters: invalid UTF-8 with no NUL — a
+   * Latin-1 text file, a truncated multi-byte sequence — round-trips through
+   * `toString('utf8')` as U+FFFD and comes back MANGLED as text here while
+   * `skill_file` (which round-trips it) correctly answers base64.
+   */
+  it('decides text vs binary exactly as skill_file does', async () => {
+    const result = await client.readResource({ uri: 'skill://demo/references/latin1.txt' });
+    const contents = result.contents[0];
+    expect(contents && 'blob' in contents ? contents.blob : undefined).toBe(
+      Buffer.from([0xff, 0xfe, 0x41]).toString('base64'),
+    );
+    expect(contents && 'text' in contents).toBe(false);
   });
 
   it('refuses a resource URI that leaves the skill directory', async () => {

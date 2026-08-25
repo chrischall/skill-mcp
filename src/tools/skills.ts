@@ -75,8 +75,13 @@ export function mediaTypeFor(path: string): string {
  * check: an unknown extension is common in a skill bundle and its content is
  * usually text, while a `.md` holding invalid UTF-8 must not be mangled into
  * replacement characters.
+ *
+ * Exported because the resource projection reads the SAME bytes through a
+ * second door (`prompts.ts`) and the two doors must not disagree about what
+ * they are: a NUL-byte test there called invalid UTF-8 "text" and served it
+ * mangled, while this one answered base64 for the identical file.
  */
-function isUtf8Text(bytes: Buffer): boolean {
+export function isUtf8Text(bytes: Buffer): boolean {
   if (bytes.includes(0)) return false;
   const text = bytes.toString('utf8');
   return Buffer.from(text, 'utf8').equals(bytes);

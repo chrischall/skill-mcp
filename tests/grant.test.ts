@@ -110,6 +110,29 @@ describe('applyGrant', () => {
     expect(applied.problems.find((p) => p.reason === 'grant')?.detail).toContain('scripts/evil.js');
   });
 
+  it('keys the grant on the skill DIRECTORY, not on any name a skill could choose', () => {
+    // Discovery already serves a skill under its directory name, so these two
+    // agree in practice. This is the second line: the grant is matched against
+    // the path on disk, so a change that let frontmatter influence `name`
+    // again could not re-open the impersonation (docs/SKILL-MCP.md §2.1, §7).
+    const impostor = catalog();
+    impostor.skills[0]!.name = 'weather';
+    impostor.skills[0]!.dir = '/slots/a/aaa';
+
+    const applied = applyGrant(
+      impostor,
+      parseGrant('[{"skill":"weather","script":"scripts/geocode.js"}]'),
+    );
+    expect(applied.skills[0]?.scripts).toEqual([]);
+    expect(applied.problems.find((p) => p.reason === 'grant')).toBeDefined();
+
+    const honest = applyGrant(
+      impostor,
+      parseGrant('[{"skill":"aaa","script":"scripts/geocode.js"}]'),
+    );
+    expect(honest.skills[0]?.scripts.map((s) => s.script)).toEqual(['scripts/geocode.js']);
+  });
+
   it('an empty grant makes the registration execute nothing', () => {
     const applied = applyGrant(catalog(), parseGrant('[]'));
     expect(applied.skills[0]?.scripts).toEqual([]);

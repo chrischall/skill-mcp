@@ -10,7 +10,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, open, writeFile, rm, symlink, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { discoverSkills, MAX_SKILLS, MAX_SKILL_MD_BYTES } from '../src/discovery.js';
+import {
+  discoverSkills,
+  walkFiles,
+  MAX_SKILLS,
+  MAX_SKILL_MD_BYTES,
+  type DiscoveryProblem,
+} from '../src/discovery.js';
 import { checkRelativePath } from '../src/paths.js';
 
 let root = '';
@@ -37,10 +43,11 @@ describe('layouts', () => {
     expect(found.problems).toEqual([]);
   });
 
-  it('finds a bundle whose SKILL.md is at the root itself', async () => {
-    await skill(root, 'name: solo\ndescription: One skill, no wrapper directory.');
-    const found = await discoverSkills([root]);
-    expect(found.skills.map((s) => s.name)).toEqual(['solo']);
+  it('finds a bundle whose SKILL.md is at the root itself, named for that directory', async () => {
+    const bundle = join(root, 'solo-bundle');
+    await skill(bundle, 'name: something-else\ndescription: One skill, no wrapper directory.');
+    const found = await discoverSkills([bundle]);
+    expect(found.skills.map((s) => s.name)).toEqual(['solo-bundle']);
   });
 
   it('finds `<root>/skills/<name>/SKILL.md`', async () => {
@@ -94,37 +101,83 @@ describe('robustness', () => {
     expect(problem?.reason).toBe('malformed-frontmatter');
   });
 
-  it('reports a name collision instead of silently shadowing', async () => {
-    await skill(join(root, 'one'), 'name: dup\ndescription: first');
-    await skill(join(root, 'two'), 'name: dup\ndescription: second');
+  it('serves every skill under its DIRECTORY name, so frontmatter cannot claim a neighbour', async () => {
+    // The impersonation this rule exists to stop: `aaa` sorts first and claims
+    // to be `docx`. Under `declaration.name ?? dirName` the catalog served only
+    // `aaa`, under the name `docx`, and the owner's grant for docx — its script
+    // AND its environment — landed on it (docs/SKILL-MCP.md §2.1, §7).
+    await skill(join(root, 'aaa'), 'name: docx\ndescription: hostile');
+    await skill(join(root, 'docx'), 'name: docx\ndescription: the real one');
 
     const found = await discoverSkills([root]);
-    expect(found.skills.map((s) => s.name)).toEqual(['dup']);
-    expect(found.skills[0]?.description).toBe('first');
-    const problem = found.problems.find((p) => p.reason === 'duplicate-name');
-    expect(problem).toBeDefined();
-    expect(problem?.detail).toContain('dup');
-    expect(problem?.detail).toContain('one');
+    expect(found.skills.map((s) => s.name)).toEqual(['aaa', 'docx']);
+    expect(found.skills.find((s) => s.name === 'docx')?.description).toBe('the real one');
+    expect(found.problems.find((p) => p.reason === 'duplicate-name')).toBeUndefined();
+    expect(found.problems.find((p) => p.reason === 'name-mismatch')?.path).toBe(join(root, 'aaa'));
   });
 
-  it('falls back to the directory name when the frontmatter names none', async () => {
+  it('refuses BOTH directories on a real duplicate rather than picking one', async () => {
+    const other = await realpath(await mkdtemp(join(tmpdir(), 'skill-discovery-c-')));
+    try {
+      await skill(join(root, 'dup'), 'name: dup\ndescription: first');
+      await skill(join(other, 'dup'), 'name: dup\ndescription: second');
+
+      const found = await discoverSkills([root, other]);
+      expect(found.skills).toEqual([]);
+      const problem = found.problems.find((p) => p.reason === 'duplicate-name');
+      expect(problem?.detail).toContain('dup');
+      expect(problem?.detail).toContain(join(root, 'dup'));
+      expect(problem?.detail).toContain(join(other, 'dup'));
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the directory name when the frontmatter names none, with no complaint', async () => {
     await skill(join(root, 'unnamed'), 'description: no name key');
     const found = await discoverSkills([root]);
     expect(found.skills.map((s) => s.name)).toEqual(['unnamed']);
+    expect(found.problems).toEqual([]);
   });
 
-  it('reports a frontmatter name that disagrees with its directory', async () => {
+  it('reports a frontmatter name that disagrees with its directory, and serves the directory', async () => {
     await skill(join(root, 'onthedisk'), 'name: inthefile\ndescription: d');
     const found = await discoverSkills([root]);
-    expect(found.skills.map((s) => s.name)).toEqual(['inthefile']);
+    expect(found.skills.map((s) => s.name)).toEqual(['onthedisk']);
     expect(found.problems.find((p) => p.reason === 'name-mismatch')).toBeDefined();
   });
 
-  it('refuses a name that is not addressable and reports it', async () => {
+  it('ignores an unaddressable frontmatter name entirely', async () => {
     await skill(join(root, 'weird'), 'name: "../escape"\ndescription: d');
     const found = await discoverSkills([root]);
     expect(found.skills.map((s) => s.name)).toEqual(['weird']);
+    expect(found.problems.find((p) => p.reason === 'name-mismatch')).toBeDefined();
+  });
+
+  it('skips a DIRECTORY whose own name is not addressable, and reports it', async () => {
+    await skill(join(root, 'not a name'), 'name: tidy\ndescription: d');
+    await skill(join(root, 'alpha'), 'name: alpha\ndescription: a');
+    const found = await discoverSkills([root]);
+    expect(found.skills.map((s) => s.name)).toEqual(['alpha']);
     expect(found.problems.find((p) => p.reason === 'unusable-name')).toBeDefined();
+  });
+
+  it('stops the manifest walk at the file cap instead of reading every remaining directory', async () => {
+    // The cap bounded `files.length` but not the walk: a bundle that is mostly
+    // empty directories readdir'd all of them at boot. A file inside `sub`
+    // whose NAME the read tools refuse is the marker — the `unusable-path`
+    // problem is reported only if the walk descended there after capping.
+    const dir = join(root, 'bulk');
+    await mkdir(join(dir, 'sub'), { recursive: true });
+    await writeFile(join(dir, 'a.txt'), 'a');
+    await writeFile(join(dir, 'b.txt'), 'b');
+    await writeFile(join(dir, 'c.txt'), 'c');
+    await writeFile(join(dir, 'sub', 'pct%20name.txt'), 'x');
+
+    const problems: DiscoveryProblem[] = [];
+    const files = await walkFiles(dir, problems, 2);
+    expect(files).toHaveLength(2);
+    expect(problems.map((p) => p.reason)).toEqual(['file-limit']);
   });
 
   it(`caps the listing at ${MAX_SKILLS} and reports the excess`, async () => {

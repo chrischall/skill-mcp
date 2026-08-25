@@ -9,11 +9,21 @@
  *  - **A malformed skill costs itself, never the listing.** Frontmatter is
  *    third-party YAML; one file that does not parse must not take the other
  *    nineteen down with it.
- *  - **A name collision is REPORTED, never shadowed.** Two directories
- *    contributing one name is refused at the resolve upstream
- *    (docs/SKILL-MCP.md §2.1); an adapter that silently picked one would make
- *    the choice by scan order, which is the thing that refusal exists to
- *    prevent. Here the first wins deterministically AND the collision is named.
+ *  - **A skill's name is its DIRECTORY's name — never its own frontmatter's.**
+ *    docs/SKILL-MCP.md §2.1: *"`name` is the skill's directory name, unique
+ *    across the whole registration."* This is a SECURITY rule, not a cosmetic
+ *    one. The owner's grant (§7, `grant.ts`) names a skill, so a skill whose
+ *    frontmatter could choose its own name could claim its NEIGHBOUR's and be
+ *    handed the neighbour's granted script and granted environment — §7's
+ *    authority inversion one hop over. The upstream resolve refuses duplicate
+ *    DIRECTORY names and cannot see a collapse that happens in the
+ *    frontmatter-name space at all. A frontmatter `name` that disagrees is
+ *    reported (`name-mismatch`) and otherwise ignored.
+ *  - **A real collision refuses BOTH directories.** Two directories of the same
+ *    name (only possible across roots, since one directory holds one name) is
+ *    refused upstream; here, serving either would let the one that sorts first
+ *    impersonate the other, which is the failure the refusal exists to prevent.
+ *    So neither is served and the collision is named.
  *
  * Nothing in this module reads a file's contents except SKILL.md, and nothing
  * follows a symlink out of a skill directory OR out of the configured root.
@@ -63,7 +73,12 @@ export interface SkillFile {
 
 /** A skill this server serves. */
 export interface DiscoveredSkill {
-  /** Unique across everything this server serves; the address every tool takes. */
+  /**
+   * The skill's DIRECTORY name (docs/SKILL-MCP.md §2.1) — unique across
+   * everything this server serves, and the address every tool and the owner's
+   * grant take. Never read from the skill's own frontmatter: see the module
+   * comment for the impersonation that would be.
+   */
   name: string;
   description?: string;
   whenToUse?: string;
@@ -150,16 +165,23 @@ async function isFile(path: string): Promise<boolean> {
  * reads paths out of, so listing one `skill_file` and `resources/read` would
  * then refuse advertises an address that does not work. A directory whose name
  * fails the rule takes its whole subtree with it, once.
+ *
+ * The cap STOPS THE WALK rather than only bounding the array: capping the
+ * array alone still readdir'd every remaining directory, so a bundle that is
+ * mostly empty directories paid for all of them at boot with nothing to show
+ * for it. `maxFiles` is a parameter so that bound is testable without writing
+ * two thousand files.
  */
-async function walkFiles(
+export async function walkFiles(
   dir: string,
   problems: DiscoveryProblem[],
+  maxFiles: number = MAX_FILES_PER_SKILL,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
   const queue: string[] = [''];
   let capped = false;
 
-  while (queue.length > 0) {
+  walk: while (queue.length > 0) {
     const rel = queue.shift() as string;
     let entries;
     try {
@@ -184,9 +206,9 @@ async function walkFiles(
         continue;
       }
       if (!entry.isFile()) continue;
-      if (files.length >= MAX_FILES_PER_SKILL) {
+      if (files.length >= maxFiles) {
         capped = true;
-        continue;
+        break walk;
       }
       const st = await lstat(join(dir, childRel)).catch(() => null);
       if (!st) continue;
@@ -198,7 +220,7 @@ async function walkFiles(
     problems.push({
       path: dir,
       reason: 'file-limit',
-      detail: `more than ${MAX_FILES_PER_SKILL} files; the manifest lists the first ${MAX_FILES_PER_SKILL}`,
+      detail: `more than ${maxFiles} files; the manifest lists the first ${maxFiles} and the rest of the bundle is not walked`,
     });
   }
 
@@ -285,29 +307,26 @@ async function readSkill(
     problems.push({ path: dir, reason: 'declaration', detail });
   }
 
-  const dirName = basename(dir);
-  let name = declaration.name ?? dirName;
+  // The DIRECTORY names the skill, full stop (docs/SKILL-MCP.md §2.1). The
+  // frontmatter's `name` is content from the same bundle as the scripts, and
+  // the owner's grant is keyed by skill name, so a frontmatter that could pick
+  // the name could pick a NEIGHBOUR's and inherit its granted script and
+  // granted environment.
+  const name = basename(dir);
   if (!NAME.test(name)) {
     problems.push({
       path: dir,
       reason: 'unusable-name',
-      detail: `frontmatter "name" is not addressable; serving this skill as "${dirName}" instead`,
+      detail: `the directory name "${name}" is not addressable, and a skill is served under its directory name; skipped`,
     });
-    name = dirName;
-  } else if (declaration.name !== undefined && declaration.name !== dirName) {
+    return null;
+  }
+  if (declaration.name !== undefined && declaration.name !== name) {
     problems.push({
       path: dir,
       reason: 'name-mismatch',
-      detail: `frontmatter names it "${declaration.name}" but the directory is "${dirName}"; serving it as "${declaration.name}"`,
+      detail: `frontmatter names it "${declaration.name}", but a skill is served under its DIRECTORY name; serving it as "${name}"`,
     });
-  }
-  if (!NAME.test(name)) {
-    problems.push({
-      path: dir,
-      reason: 'unusable-name',
-      detail: `neither the frontmatter nor the directory gives an addressable name; skipped`,
-    });
-    return null;
   }
 
   const files = await walkFiles(dir, problems);
@@ -443,9 +462,7 @@ async function candidates(
  */
 export async function discoverSkills(roots: string[]): Promise<Catalog> {
   const problems: DiscoveryProblem[] = [];
-  const skills: DiscoveredSkill[] = [];
-  const byName = new Map<string, DiscoveredSkill>();
-  let overflow = 0;
+  const found: DiscoveredSkill[] = [];
 
   for (const root of roots) {
     let realRoot: string;
@@ -472,24 +489,42 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
 
     for (const dir of dirs) {
       const skill = await readSkill(dir, root, problems);
-      if (!skill) continue;
-
-      const existing = byName.get(skill.name);
-      if (existing) {
-        problems.push({
-          path: dir,
-          reason: 'duplicate-name',
-          detail: `two directories both contribute the skill "${skill.name}" (${existing.dir} and ${dir}); serving the first and ignoring the second`,
-        });
-        continue;
-      }
-      if (skills.length >= MAX_SKILLS) {
-        overflow += 1;
-        continue;
-      }
-      byName.set(skill.name, skill);
-      skills.push(skill);
+      if (skill) found.push(skill);
     }
+  }
+
+  /*
+   * Collisions are resolved ACROSS all roots and refuse BOTH sides.
+   *
+   * A name is a directory name now, so two of them can only collide across
+   * roots — and there the choice would be root order, which is the "silently
+   * shadowing" the upstream refusal exists to prevent. Serving the first is
+   * worse than serving neither: the loser's grant (`grant.ts` keys on the
+   * name) would be applied to the winner. So the name is unserved and named.
+   */
+  const byName = new Map<string, DiscoveredSkill[]>();
+  for (const skill of found) {
+    const group = byName.get(skill.name);
+    if (group) group.push(skill);
+    else byName.set(skill.name, [skill]);
+  }
+
+  const skills: DiscoveredSkill[] = [];
+  let overflow = 0;
+  for (const [name, group] of byName) {
+    if (group.length > 1) {
+      problems.push({
+        path: group[0]!.dir,
+        reason: 'duplicate-name',
+        detail: `${group.length} directories all contribute the skill "${name}" (${group.map((s) => s.dir).join(', ')}); NONE of them is served — serving one would let whichever was scanned first stand in for the others, and the owner's grant for that name would follow it`,
+      });
+      continue;
+    }
+    if (skills.length >= MAX_SKILLS) {
+      overflow += 1;
+      continue;
+    }
+    skills.push(group[0]!);
   }
 
   if (overflow > 0) {

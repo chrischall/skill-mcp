@@ -89,6 +89,35 @@ describe('loadConfig', () => {
     expect(config.grantFrom).toBe('declaration');
   });
 
+  /*
+   * The window this closes: mcp-host does not inject `MCP_SKILLS_PATH` yet
+   * (docs/SKILL-MCP.md §5.3 leaves that to a later task), so TODAY the only way
+   * to point a hosted registration at a bundle is `SKILLS_DIR` in its plain
+   * `env` — which would land on the declaration-stands default inside a child
+   * that holds the owner's credentials. So "hosted" is not read off the roots
+   * variable alone: any variable the runner INJECTS says a runner is present.
+   */
+  it('grants nothing when a runner-injected marker says this is a hosted child', () => {
+    const config = loadConfig({
+      SKILLS_DIR: '/home/me/skills',
+      MCP_HOST_METER_FILE: '/data/meter/reg_abc.json',
+    });
+    expect(config.rootsFrom).toBe('SKILLS_DIR');
+    expect(config.grant?.entries).toEqual([]);
+    expect(config.grantFrom).toBe('hosted-default');
+    expect(config.hosted).toBe(true);
+  });
+
+  it('recognises the other runner-injected markers too', () => {
+    expect(loadConfig({ SKILLS_DIR: '/s', MCP_DATA_DIR: '/data/state/reg_abc' }).grantFrom).toBe(
+      'hosted-default',
+    );
+    expect(loadConfig({ SKILLS_DIR: '/s', MCP_BLOB_BASE_URL: 'https://x/b/reg_abc' }).grantFrom).toBe(
+      'hosted-default',
+    );
+    expect(loadConfig({ SKILLS_DIR: '/s' }).hosted).toBe(false);
+  });
+
   it('lets an explicit grant win over the hosted default, in both directions', () => {
     const wider = loadConfig({
       MCP_SKILLS_PATH: '/slots/a',

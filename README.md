@@ -28,6 +28,16 @@ files those instructions refer to. Three layouts are found under each root:
 <root>/skills/<name>/SKILL.md
 ```
 
+**A skill is served under its DIRECTORY name**, never under the `name` in its
+own frontmatter (a frontmatter `name` that disagrees is reported and otherwise
+ignored; where the root itself is the skill, the root directory names it). That
+is a security rule, not a tidiness one: the owner's grant names a skill, so a
+bundle that could choose its own name could claim its neighbour's and be handed
+the neighbour's granted script and granted variables. For the same reason, two
+directories that really do contribute one name — only possible across two roots
+— have **both** refused and reported, rather than one of them winning by scan
+order.
+
 ## The tools
 
 | tool | arguments | returns |
@@ -58,7 +68,7 @@ experience**.
 
 Anything that keeps a directory from being served comes back in `skill_list`'s
 `problems`, with the path and the reason: no `SKILL.md`, frontmatter that will
-not parse, a name two directories both claim, a declared script that is not in
+not parse, a name two directories both claim (both refused), a declared script that is not in
 the bundle, a symlink leading out of the root or out of a skill, a filename the
 read tools could not address. One bad skill costs itself and never the listing,
 and there is no third outcome where something is dropped in silence — a
@@ -205,19 +215,23 @@ did not ask for grants nothing. There is no spelling of it that makes something
 runnable which a skill did not declare, which is what makes it safe to read from
 an environment that also carries a registration's own variables.
 
-**When it is absent, the default depends on who supplied the roots, and the
-hosted half is fail-closed.**
+**When it is absent, the default depends on whether a host started this child,
+and the hosted half is fail-closed.**
 
-- **Roots from `MCP_SKILLS_PATH`** (a host is injecting them, so there is a
-  registration and an owner behind this child): **nothing is granted and nothing
-  runs.** Every skill's instructions and files are still served — that is a
-  working, useful connector. The reason is that one child holds one environment
-  holding every credential the owner set, so a skill whose frontmatter named its
-  *neighbour's* variable would otherwise be handed the neighbour's credential
-  with nobody having decided to give it.
-- **Roots from `SKILLS_DIR`, or the packaged default**: the skill's own
-  declaration stands. Nothing is injecting anything, and the person who pointed
-  the server at a directory is the owner.
+- **Hosted** — any variable mcp-host's runner *injects* is present
+  (`MCP_SKILLS_PATH`, `MCP_HOST_METER_FILE`, `MCP_DATA_DIR`,
+  `MCP_BLOB_BASE_URL`): **nothing is granted and nothing runs.** Every skill's
+  instructions and files are still served — that is a working, useful connector.
+  The reason is that one child holds one environment holding every credential the
+  owner set, so a skill whose frontmatter named its *neighbour's* variable would
+  otherwise be handed the neighbour's credential with nobody having decided to
+  give it. It deliberately does not key on `MCP_SKILLS_PATH` alone: mcp-host does
+  not inject that variable yet, so today's only hosted channel is `SKILLS_DIR` in
+  a registration's plain `env`, and that must not land on the open default. The
+  marker check can only ever move the default in the fail-closed direction.
+- **Standalone** — no injected marker at all: the skill's own declaration
+  stands. Nothing is injecting anything, and the person who pointed the server at
+  a directory is the owner.
 
 `skill_list` reports which case it is (`grantFrom`, plus a `grantNote` in the
 hosted one) and lists a skill's declared-but-ungranted scripts, so "nothing

@@ -13,13 +13,14 @@
  * nothing that `skill_load` and `skill_file` do not already serve.
  *
  * Resources are registered from the catalog snapshot and read through the same
- * containment check the tools use: a URI is caller input like any other path.
+ * containment check — and the same text/binary decision — the tools use, so the
+ * second door cannot answer differently about the same bytes.
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { SkillMcpDeps } from './deps.js';
 import { resolveInsideSkill } from './paths.js';
 import { readCapped } from './read-capped.js';
-import { mediaTypeFor, MAX_FILE_BYTES } from './tools/skills.js';
+import { isUtf8Text, mediaTypeFor, MAX_FILE_BYTES } from './tools/skills.js';
 
 /**
  * Total resources this server registers. A bundle of several thousand files
@@ -62,14 +63,21 @@ export function registerSkillPrompts(server: McpServer, deps: SkillMcpDeps): voi
         uri,
         { title: `${skill.name}: ${file.path}`, mimeType: mediaTypeFor(file.path) },
         async () => {
-          // Re-resolved on every read rather than trusted from the listing: the
-          // URI arrives from the caller, and a listed path is not a capability.
+          // The SDK routes by exact registered URI, so `file.path` here is the
+          // catalog's own value rather than caller input. It still goes through
+          // the containment resolve, because a path that was inside the skill
+          // when the catalog was built is not the same claim as one that is
+          // inside it now — a symlink can be planted between the two — and
+          // because one resolver for both doors is what keeps them agreeing.
           const target = await resolveInsideSkill(skill.dir, file.path);
           // The same bounded read `skill_file` uses, for the same reason: this
           // door is narrower, not safer (read-capped.ts).
           const { bytes } = await readCapped(target, MAX_FILE_BYTES);
           const mimeType = mediaTypeFor(file.path);
-          const isText = !bytes.includes(0);
+          // The SAME text/binary decision `skill_file` makes, from the same
+          // function: one file must not come back mangled as text through one
+          // door and base64 through the other.
+          const isText = isUtf8Text(bytes);
           return {
             contents: [
               isText
