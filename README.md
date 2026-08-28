@@ -290,7 +290,7 @@ resource surfaces entirely.
 ```bash
 npm install
 npm run build      # tsc → dist/, esbuild → dist/bundle.js
-npm test           # vitest
+npm test           # tsc typecheck + vitest
 ```
 
 ---
