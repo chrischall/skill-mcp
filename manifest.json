@@ -3,7 +3,7 @@
   "manifest_version": "0.3",
   "name": "skill-mcp",
   "display_name": "Skills",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Serves a directory of Agent Skills over MCP — list them, load their instructions, read their bundled files, and run only the scripts a skill declares",
   "author": {
     "name": "Chris Chall",
@@ -17,13 +17,20 @@
   "homepage": "https://github.com/chrischall/skill-mcp",
   "support": "https://github.com/chrischall/skill-mcp/issues",
   "license": "MIT",
-  "keywords": ["skills", "agent-skills", "adapter", "mcp"],
+  "keywords": [
+    "skills",
+    "agent-skills",
+    "adapter",
+    "mcp"
+  ],
   "server": {
     "type": "node",
     "entry_point": "dist/bundle.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/bundle.js"],
+      "args": [
+        "${__dirname}/dist/bundle.js"
+      ],
       "env": {
         "SKILLS_DIR": "${user_config.skills_dir}"
       }

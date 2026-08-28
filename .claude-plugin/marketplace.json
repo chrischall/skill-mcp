@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "MCP server that serves a directory of Agent Skills — instructions, bundled files, and only the scripts a skill declares",
-    "version": "0.0.0"
+    "version": "0.1.0"
   },
   "plugins": [
     {
@@ -15,14 +15,19 @@
       "displayName": "Skills",
       "source": "./",
       "description": "Serves a directory of Agent Skills over MCP: list them, load their instructions, read their files, run their declared scripts",
-      "version": "0.0.0",
+      "version": "0.1.0",
       "author": {
         "name": "Chris Hall"
       },
       "homepage": "https://github.com/chrischall/skill-mcp",
       "repository": "https://github.com/chrischall/skill-mcp",
       "license": "MIT",
-      "keywords": ["skills", "agent-skills", "mcp", "adapter"],
+      "keywords": [
+        "skills",
+        "agent-skills",
+        "mcp",
+        "adapter"
+      ],
       "category": "productivity"
     }
   ]
