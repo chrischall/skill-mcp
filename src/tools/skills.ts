@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { McpToolError, textResult, toolAnnotations, schemaConfirm } from '@chrischall/mcp-utils';
+import { McpToolError, minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
 import type { SkillMcpDeps } from '../deps.js';
 import type { DiscoveredSkill } from '../discovery.js';
 import { MAX_SKILL_MD_BYTES } from '../discovery.js';
@@ -158,7 +158,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     },
     () => {
       const { catalog, config } = deps;
-      return textResult({
+      return minifiedResult({
         roots: catalog.roots,
         rootsFrom: config.rootsFrom,
         grantFrom: config.grantFrom,
@@ -237,7 +237,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     },
     ({ name }) => {
       const skill = requireSkill(deps, name);
-      return textResult({
+      return minifiedResult({
         name: skill.name,
         ...(skill.description !== undefined ? { description: skill.description } : {}),
         ...(skill.whenToUse !== undefined ? { whenToUse: skill.whenToUse } : {}),
@@ -338,7 +338,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       // IN REQUEST ORDER (docs/SKILL-MCP.md §2.1): Promise.all preserves it, so
       // a caller pairs entry N with the path it asked for at N rather than
       // matching on the string.
-      return textResult({ skill: skill.name, files });
+      return minifiedResult({ skill: skill.name, files });
     },
   );
 
@@ -398,7 +398,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
        * of the variables the script will be handed before any of it happens.
        */
       const preview = await previewRun(deps, skill, script, argv);
-      if (confirm !== true) return textResult(preview);
+      if (confirm !== true) return minifiedResult(preview);
 
       const result = await runDeclaredScript({
         skill,
@@ -407,7 +407,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
         lock: deps.lock,
         sourceEnv: deps.sourceEnv,
       });
-      return textResult(result);
+      return minifiedResult(result);
     },
   );
 }

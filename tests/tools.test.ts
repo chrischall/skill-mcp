@@ -408,6 +408,27 @@ describe('skill_run', () => {
     expect(body.stdout).toBe('ran x,y');
   });
 
+  // Every response here is minified, the confirm-gated run receipt included.
+  // That is safe for exactly one reason: `minifiedResult` drops the JSON INDENT
+  // and the runs after `:` and `,` — it never reaches inside a string — so a
+  // script's own stdout, blank lines and all, survives byte-for-byte. A
+  // hand-rolled minifier (a regex over the serialised text, a collapse of
+  // `\s+`) would corrupt exactly the payload this tool exists to return.
+  it('minifies the run receipt without touching the script output inside it', async () => {
+    const shaped = 'line one.\n\n    indented.   ';
+    const raw = await harness.callTool('skill_run', {
+      name: 'demo',
+      script: 'scripts/echo.js',
+      args: [shaped],
+      confirm: true,
+    });
+    const text = (raw as { content: Array<{ text: string }> }).content[0].text;
+    // None of OUR whitespace: the serialised receipt is a single line.
+    expect(text.split('\n')).toHaveLength(1);
+    // All of the SCRIPT's: the newlines and the trailing run of spaces survive.
+    expect(parseToolResult<{ stdout: string }>(raw).stdout).toBe(`ran ${shaped}`);
+  });
+
   it('refuses an undeclared script even with confirm', async () => {
     const result = await harness.callTool('skill_run', {
       name: 'demo',
