@@ -7,7 +7,7 @@
   },
   "metadata": {
     "description": "MCP server that serves a directory of Agent Skills — instructions, bundled files, and only the scripts a skill declares",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
@@ -15,7 +15,7 @@
       "displayName": "Skills",
       "source": "./",
       "description": "Serves a directory of Agent Skills over MCP: list them, load their instructions, read their files, run their declared scripts",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "author": {
         "name": "Chris Hall"
       },

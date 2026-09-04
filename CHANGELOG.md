@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/chrischall/skill-mcp/compare/v0.1.0...v0.2.0) (2026-09-04)
+
+
+### Features
+
+* **tools:** minify every response, and take @chrischall/mcp-utils 0.23.2 ([#7](https://github.com/chrischall/skill-mcp/issues/7)) ([56072da](https://github.com/chrischall/skill-mcp/commit/56072da3550c344f1a7f56ed8c40f90f28184fd5))
+
 ## 0.1.0 (2026-08-28)
 
 
