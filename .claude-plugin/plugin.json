@@ -1,7 +1,7 @@
 {
   "name": "skill-mcp",
   "displayName": "Skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "MCP server that serves a directory of Agent Skills — instructions, bundled files, and only the scripts a skill declares",
   "author": {
     "name": "Chris Hall",

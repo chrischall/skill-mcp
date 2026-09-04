@@ -7,4 +7,4 @@
  * Keep the marker comment on the export line and nowhere else — the sync test
  * flags every line carrying that literal, prose included.
  */
-export const VERSION = '0.1.0'; // x-release-please-version
+export const VERSION = '0.2.0'; // x-release-please-version
