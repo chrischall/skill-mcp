@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/chrischall/skill-mcp/compare/v0.2.0...v0.2.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** @chrischall/mcp-utils 0.26.1 ([#10](https://github.com/chrischall/skill-mcp/issues/10)) ([423cefe](https://github.com/chrischall/skill-mcp/commit/423cefe98b2159d85be397559f80a248ca330ac1))
+* **deps:** declare the peer floors mcp-utils 0.26.1 requires ([#12](https://github.com/chrischall/skill-mcp/issues/12)) ([e7db1e2](https://github.com/chrischall/skill-mcp/commit/e7db1e2f5b32bd9397efce25c71326c38a3d1281))
+
 ## [0.2.0](https://github.com/chrischall/skill-mcp/compare/v0.1.0...v0.2.0) (2026-09-04)
 
 
