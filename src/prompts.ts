@@ -16,7 +16,7 @@
  * containment check — and the same text/binary decision — the tools use, so the
  * second door cannot answer differently about the same bytes.
  */
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import type { SkillMcpDeps } from './deps.js';
 import { resolveInsideSkill } from './paths.js';
 import { readCapped } from './read-capped.js';
