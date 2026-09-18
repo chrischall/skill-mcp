@@ -119,6 +119,33 @@ describe('the tool roster', () => {
     const names = (await harness.listTools()).map((t) => t.name).sort();
     expect(names).toEqual(['skill_file', 'skill_list', 'skill_load', 'skill_run']);
   });
+
+  // SDK v2 takes a z.object, not a raw shape. Pin what a client actually sees
+  // over tools/list, so a schema regression cannot quietly drop an argument.
+  it('publishes each input schema through the SDK v2 tools/list exchange', async () => {
+    const byName = new Map((await harness.client.listTools()).tools.map((t) => [t.name, t.inputSchema]));
+    expect(byName.get('skill_list')).toMatchObject({ type: 'object' });
+    expect(byName.get('skill_load')).toMatchObject({
+      type: 'object',
+      properties: { name: { type: 'string' } },
+      required: ['name'],
+    });
+    expect(byName.get('skill_file')).toMatchObject({
+      type: 'object',
+      properties: { name: { type: 'string' }, paths: { type: 'array', items: { type: 'string' } } },
+      required: ['name', 'paths'],
+    });
+    expect(byName.get('skill_run')).toMatchObject({
+      type: 'object',
+      properties: {
+        name: { type: 'string' },
+        script: { type: 'string' },
+        args: { type: 'array', items: { type: 'string' } },
+        confirm: {},
+      },
+      required: expect.arrayContaining(['name', 'script']),
+    });
+  });
 });
 
 describe('skill_list', () => {

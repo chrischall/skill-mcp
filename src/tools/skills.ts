@@ -6,7 +6,7 @@
  * would break on a flag that has nothing to do with skills.
  */
 import { z } from 'zod';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { McpToolError, minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
 import type { SkillMcpDeps } from '../deps.js';
 import type { DiscoveredSkill } from '../discovery.js';
@@ -154,7 +154,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       description:
         'List every Agent Skill this server found: name, description, when to use it, how many files it bundles, and the exact scripts (if any) that may be executed with skill_run. Also reports anything that could not be read, so an empty list is never a mystery.',
       annotations: toolAnnotations({ title: 'List skills', readOnly: true, idempotent: true }),
-      inputSchema: {},
+      inputSchema: z.object({}),
     },
     () => {
       const { catalog, config } = deps;
@@ -233,7 +233,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       description:
         "Load one skill's SKILL.md instructions verbatim, plus a manifest of the files it bundles. Referenced files are NOT inlined — read them by name with skill_file.",
       annotations: toolAnnotations({ title: 'Load a skill', readOnly: true, idempotent: true }),
-      inputSchema: { name: NameArg },
+      inputSchema: z.object({ name: NameArg }),
     },
     ({ name }) => {
       const skill = requireSkill(deps, name);
@@ -265,7 +265,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
       description:
         "Read files a skill bundles. Paths are relative to that skill's own directory; text comes back as text, anything else as base64 with its media type. Ask for every file you need in ONE call — a SKILL.md usually points at several.",
       annotations: toolAnnotations({ title: 'Read skill files', readOnly: true, idempotent: true }),
-      inputSchema: { name: NameArg, paths: PathsArg },
+      inputSchema: z.object({ name: NameArg, paths: PathsArg }),
     },
     async ({ name, paths }) => {
       const skill = requireSkill(deps, name);
@@ -359,7 +359,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
         idempotentHint: false,
         openWorldHint: true,
       },
-      inputSchema: {
+      inputSchema: z.object({
         name: NameArg,
         script: z
           .string()
@@ -371,7 +371,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
           .optional()
           .describe('Arguments passed as an argv array. There is no shell: nothing here is interpreted.'),
         confirm: schemaConfirm,
-      },
+      }),
     },
     async ({ name, script, args, confirm }) => {
       const skill = requireSkill(deps, name);
