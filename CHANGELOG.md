@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/chrischall/skill-mcp/compare/v0.2.1...v0.3.0) (2026-09-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** the server now runs on MCP SDK v2 (@modelcontextprotocol/server); the v1 @modelcontextprotocol/sdk dependency is gone.
+
+### Features
+
+* **mcp:** migrate to MCP SDK v2 ([#23](https://github.com/chrischall/skill-mcp/issues/23)) ([22abed1](https://github.com/chrischall/skill-mcp/commit/22abed1ab92daf01bbadded401a044d7a55a76bb))
+
+
+### Bug Fixes
+
+* **deps:** bump the production-dependencies group with 3 updates ([#21](https://github.com/chrischall/skill-mcp/issues/21)) ([8601f18](https://github.com/chrischall/skill-mcp/commit/8601f18f9baabcbad1c1a7b886f9272414206360))
+
 ## [0.2.1](https://github.com/chrischall/skill-mcp/compare/v0.2.0...v0.2.1) (2026-09-10)
 
 
