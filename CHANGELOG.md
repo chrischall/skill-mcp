@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0](https://github.com/chrischall/skill-mcp/compare/v0.3.0...v1.0.0) (2026-09-20)
+
+
+### Features
+
+* **deps:** take mcp-utils 1.0.0 so the server boots a modern entry ([#24](https://github.com/chrischall/skill-mcp/issues/24)) ([c819f6e](https://github.com/chrischall/skill-mcp/commit/c819f6e242cd21c674b7d08f7e3ffb7430ff1be9))
+
+
+### Bug Fixes
+
+* **release:** drop bump-minor-pre-major so a breaking change cuts a major ([#26](https://github.com/chrischall/skill-mcp/issues/26)) ([9b63675](https://github.com/chrischall/skill-mcp/commit/9b63675740a4ab9c7bb6ced7bc197e64213a32de))
+
 ## [0.3.0](https://github.com/chrischall/skill-mcp/compare/v0.2.1...v0.3.0) (2026-09-18)
 
 
