@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/chrischall/skill-mcp/compare/v1.0.0...v1.0.1) (2026-09-21)
+
+
+### Documentation
+
+* AGENTS.md pointed at a directory that does not exist ([#27](https://github.com/chrischall/skill-mcp/issues/27)) ([8a46292](https://github.com/chrischall/skill-mcp/commit/8a46292166fda8287a84d036ef344e3bbdf432e1))
+
 ## [1.0.0](https://github.com/chrischall/skill-mcp/compare/v0.3.0...v1.0.0) (2026-09-20)
 
 
