@@ -1,6 +1,6 @@
 # AGENTS.md — skill-mcp
 
-Guidance for Codex working in this repo. Fleet-wide conventions (the
+Guidance for Claude working in this repo. Fleet-wide conventions (the
 auto-review ladder, the merge policy, release-please rules) live in
 `~/.codex/AGENTS.md` and `chrischall/workflows` — deliberately NOT restated
 here. What follows is true of this repo and nowhere else.
