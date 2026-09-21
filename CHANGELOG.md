@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/chrischall/skill-mcp/compare/v1.0.1...v1.0.2) (2026-09-21)
+
+
+### Documentation
+
+* AGENTS.md should not say it is guidance for Claude ([#29](https://github.com/chrischall/skill-mcp/issues/29)) ([fa331ca](https://github.com/chrischall/skill-mcp/commit/fa331cabce5a195c6cfb1245b1c886672dc9867c))
+
 ## [1.0.1](https://github.com/chrischall/skill-mcp/compare/v1.0.0...v1.0.1) (2026-09-21)
 
 
