@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.4](https://github.com/chrischall/skill-mcp/compare/v1.0.3...v1.0.4) (2026-09-23)
+
+
+### Bug Fixes
+
+* **frontmatter:** stop refusing skills whose descriptions contain *emphasis* or & ([#33](https://github.com/chrischall/skill-mcp/issues/33)) ([643a8c0](https://github.com/chrischall/skill-mcp/commit/643a8c0ffed1a6c133582c0510d3770fca3075cd))
+
 ## [1.0.3](https://github.com/chrischall/skill-mcp/compare/v1.0.2...v1.0.3) (2026-09-23)
 
 
