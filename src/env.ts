@@ -9,6 +9,18 @@
  * frontmatter could name that variable would read it just as effectively,
  * which is why the declaration NARROWS and the owner GRANTS.
  *
+ * **What it is NOT: a credential boundary against a hostile script.** The
+ * script is spawned as the SAME uid as this server (`src/run.ts`: no uid drop,
+ * no namespace, no seccomp here), and Linux lets a same-uid, dumpable process
+ * read `/proc/<ppid>/environ` — which holds this server's ORIGINAL exec-time
+ * environment, every credential included, however `process.env` is edited
+ * afterwards. So the allowlist decides what a well-behaved script is HANDED;
+ * it cannot stop a script written to go looking. Isolation between skills that
+ * do not trust each other has to come from the tier — a distinct uid for
+ * scripts, `/proc` mounted `hidepid=2`, or a non-dumpable server — and until
+ * the host provides one, a registration should carry only skills whose owner
+ * would hand each of them every credential it holds (chrischall/fleet-audit#244).
+ *
  * The precedent is `packages/runner-node/src/spawn-env.ts` in mcp-host, and it
  * is worth quoting precisely because half of it is easy to misquote:
  *

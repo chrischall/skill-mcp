@@ -16,7 +16,7 @@
  * absent. A file whose author believes it is being read and which has never
  * once taken effect is the failure that rule exists for.
  */
-import { parseDocument } from 'yaml';
+import { isAlias, parseDocument, visit } from 'yaml';
 import { checkRelativePath } from './paths.js';
 
 /** Frontmatter that could not be read. Reported per skill; never fatal to a listing. */
@@ -126,11 +126,6 @@ export function parseSkillMd(text: string): ParsedSkillMd {
     );
   }
 
-  // `&anchor` / `*alias` are refused before the parser can expand them.
-  if (/(^|\s)[&*][A-Za-z0-9_-]+/m.test(raw)) {
-    throw new FrontmatterError('SKILL.md frontmatter uses a YAML anchor or alias, which is refused');
-  }
-
   // `parseDocument`, not `parse`: the parser recovers from several errors
   // rather than throwing, and a document that "parsed" into a shape its author
   // did not write is exactly the silent misread §7.1 refuses. Errors AND
@@ -158,10 +153,26 @@ export function parseSkillMd(text: string): ParsedSkillMd {
     );
   }
 
+  // `&anchor` / `*alias` are refused structurally, on the parsed tree and
+  // before anything is materialised. Not a regex over the raw text: `*` and `&`
+  // are ordinary characters inside a scalar (`Run *all* tests`, `Q &A`), and a
+  // text match refused those descriptions and dropped the whole skill.
+  let usesAnchorOrAlias = false;
+  visit(doc, (_key, node) => {
+    if (isAlias(node) || (node as { anchor?: unknown }).anchor) {
+      usesAnchorOrAlias = true;
+      return visit.BREAK;
+    }
+    return undefined;
+  });
+  if (usesAnchorOrAlias) {
+    throw new FrontmatterError('SKILL.md frontmatter uses a YAML anchor or alias, which is refused');
+  }
+
   let parsed: unknown;
   try {
     // `maxAliasCount: 0` belongs on the materialisation, not the parse: aliases
-    // are expanded here. The pre-parse refusal above is the first of the two.
+    // are expanded here. The structural refusal above is the first of the two.
     parsed = doc.toJS({ maxAliasCount: 0 });
   } catch (err) {
     const detail = err instanceof Error ? err.message.split('\n')[0] : String(err);

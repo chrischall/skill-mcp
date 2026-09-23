@@ -115,6 +115,13 @@ runs and **what it is handed**; each has its own test.
   fixed half mirrors mcp-host's `INSTALL_ALLOWLIST`
   (`packages/runner-node/src/spawn-env.ts`), for the reason that file gives: a
   host constant a hosted declaration cannot widen by one name.
+  **This decides what a script is handed, not what a hostile script can reach.**
+  A script runs as the same uid as this server, and on Linux a same-uid process
+  can read `/proc/<parent pid>/environ` — the server's full original
+  environment, every credential in it. Real isolation between skills that do
+  not trust each other needs the tier (a distinct uid for scripts, `/proc`
+  mounted `hidepid=2`, or a non-dumpable server); until then, only put skills in
+  one registration if you would give each of them every credential it holds.
 - **A non-zero exit is a normal, reported outcome** — exit code, stdout and
   stderr all come back. It is never an exception that loses the output.
 - **`skill_run` is confirm-gated.** Without `confirm: true` it starts no process
@@ -225,7 +232,8 @@ and the hosted half is fail-closed.**
   The reason is that one child holds one environment holding every credential the
   owner set, so a skill whose frontmatter named its *neighbour's* variable would
   otherwise be handed the neighbour's credential with nobody having decided to
-  give it. It deliberately does not key on `MCP_SKILLS_PATH` alone: mcp-host does
+  give it. (That is about what a script is *handed*; it is not a sandbox — see
+  the env allowlist note above on `/proc/<pid>/environ`.) It deliberately does not key on `MCP_SKILLS_PATH` alone: mcp-host does
   not inject that variable yet, so today's only hosted channel is `SKILLS_DIR` in
   a registration's plain `env`, and that must not land on the open default. The
   marker check can only ever move the default in the fail-closed direction.
