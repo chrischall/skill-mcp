@@ -40,6 +40,24 @@ describe('parseSkillMd', () => {
     expect(() => parseSkillMd(doc('a: &x hello\nb: *x'))).toThrow(FrontmatterError);
   });
 
+  it('refuses an anchor even when nothing aliases it', () => {
+    expect(() => parseSkillMd(doc('a: &x hello\nb: world'))).toThrow(/anchor or alias/);
+  });
+
+  it('refuses an anchor on a collection', () => {
+    expect(() => parseSkillMd(doc('a: &x\n  k: v\nb: *x'))).toThrow(/anchor or alias/);
+  });
+
+  it.each([
+    ['plain scalar with emphasis', 'description: Run *all* tests', 'Run *all* tests'],
+    ['quoted scalar with emphasis', 'description: "Handles *bold* markdown"', 'Handles *bold* markdown'],
+    ['ampersand after a space', 'description: Q &A helper', 'Q &A helper'],
+    ['single-quoted anchor-looking text', "description: 'uses &ref and *ptr'", 'uses &ref and *ptr'],
+    ['block scalar with emphasis', 'description: |\n  Line one *stars*\n  &amp here', 'Line one *stars*\n&amp here\n'],
+  ])('accepts %s — & and * inside scalar text are not anchors', (_label, fm, expected) => {
+    expect(parseSkillMd(doc(`name: demo\n${fm}`)).frontmatter.description).toBe(expected);
+  });
+
   it('refuses a frontmatter block over the cap', () => {
     expect(() => parseSkillMd(doc(`name: demo\nnote: ${'x'.repeat(70_000)}`))).toThrow(
       FrontmatterError,
