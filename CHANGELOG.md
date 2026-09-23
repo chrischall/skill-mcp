@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3](https://github.com/chrischall/skill-mcp/compare/v1.0.2...v1.0.3) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** upgrade @chrischall/mcp-utils to 2.4.0 and @fetchproxy/* to 3.2.0 ([#31](https://github.com/chrischall/skill-mcp/issues/31)) ([52e0106](https://github.com/chrischall/skill-mcp/commit/52e0106d411694ebb92dbf659537a16c6ab29a24))
+
 ## [1.0.2](https://github.com/chrischall/skill-mcp/compare/v1.0.1...v1.0.2) (2026-09-21)
 
 
