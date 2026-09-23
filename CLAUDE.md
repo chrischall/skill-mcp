@@ -68,11 +68,18 @@ never the only one — everything reachable there is reachable through the tools
   `env` can carry `SKILLS_DIR`, and keying on it put the hosted case on the
   fail-OPEN default. That heuristic may only ever move the default closed.
 - **Neither the grant nor the env allowlist is a credential boundary** — never
-  describe them as one. A script runs as this server's uid and can read
-  `/proc/<ppid>/environ` (the server's full exec-time environment). They decide
-  what a well-behaved script is HANDED; isolation from a hostile script is the
-  tier's job (distinct uid / `hidepid=2` / non-dumpable), tracked in
-  chrischall/fleet-audit#244.
+  describe them as one. A script runs as this server's uid. They decide what a
+  well-behaved script is HANDED; isolation from a hostile script is the tier's
+  job (distinct uid / `hidepid=2` / non-dumpable).
+- **The exec-time environment block is wiped at boot** (`src/scrub-environ.ts`,
+  first thing in `src/index.ts`, chrischall/fleet-audit#244). Without it a
+  script reads every credential in the registration from
+  `/proc/<ppid>/environ`, which is the ORIGINAL `execve` block, not
+  `process.env`. Every variable is re-homed (assigned to itself, so `setenv`
+  copies it to the heap) BEFORE the block is zeroed through `/proc/self/mem` —
+  reverse that order and `getenv` reads zeros. It never throws; a refusal is a
+  stderr line and the server boots. `tests/scrub-environ.test.ts` proves it
+  against a real kernel on Linux CI (skipped on macOS).
 - **Every path is checked twice, on the STRING and on the resolved real path**
   (`src/paths.ts`). No leading `/`, no `.`/`..` segment, no backslash, no
   percent escape, no NUL; then `realpath` and a containment check against the

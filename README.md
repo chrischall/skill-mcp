@@ -116,12 +116,15 @@ runs and **what it is handed**; each has its own test.
   (`packages/runner-node/src/spawn-env.ts`), for the reason that file gives: a
   host constant a hosted declaration cannot widen by one name.
   **This decides what a script is handed, not what a hostile script can reach.**
-  A script runs as the same uid as this server, and on Linux a same-uid process
-  can read `/proc/<parent pid>/environ` — the server's full original
-  environment, every credential in it. Real isolation between skills that do
-  not trust each other needs the tier (a distinct uid for scripts, `/proc`
-  mounted `hidepid=2`, or a non-dumpable server); until then, only put skills in
-  one registration if you would give each of them every credential it holds.
+  A script runs as the same uid as this server. On Linux a same-uid process can
+  read `/proc/<parent pid>/environ`, so at boot the server wipes that
+  exec-time environment block (`src/scrub-environ.ts`; `process.env` keeps
+  every value) and that one-line read comes back empty. The values still live
+  in the server's memory, reachable through `ptrace` or `/proc/<pid>/mem` on a
+  kernel at Yama `ptrace_scope = 0`. Real isolation between skills that do not
+  trust each other needs the tier (a distinct uid for scripts, `/proc` mounted
+  `hidepid=2`, or a non-dumpable server); until then, only put skills in one
+  registration if you would give each of them every credential it holds.
 - **A non-zero exit is a normal, reported outcome** — exit code, stdout and
   stderr all come back. It is never an exception that loses the output.
 - **`skill_run` is confirm-gated.** Without `confirm: true` it starts no process
