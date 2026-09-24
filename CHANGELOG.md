@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/chrischall/skill-mcp/compare/v1.0.4...v1.1.0) (2026-09-24)
+
+
+### Features
+
+* confirm writes with a preview token instead of confirm: true ([#37](https://github.com/chrischall/skill-mcp/issues/37)) ([256803f](https://github.com/chrischall/skill-mcp/commit/256803fe32834cf8d39cde540ee93a13d4987c9c))
+
+
+### Bug Fixes
+
+* **run:** wipe the server's exec-time environment so scripts cannot read it from /proc ([#35](https://github.com/chrischall/skill-mcp/issues/35)) ([28b46a7](https://github.com/chrischall/skill-mcp/commit/28b46a72627edb7b32eed186153eb0b9a3febf40))
+
 ## [1.0.4](https://github.com/chrischall/skill-mcp/compare/v1.0.3...v1.0.4) (2026-09-23)
 
 
