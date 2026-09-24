@@ -45,7 +45,7 @@ order.
 | `skill_list` | — | every skill found: name, description, when to use it, file count, whether it declares runnable scripts and **exactly which**; plus `problems`, so an empty list is never a mystery |
 | `skill_load` | `name` | the SKILL.md body **verbatim**, plus a manifest of the bundle's files. Referenced files are not inlined — that is what `skill_file` is for |
 | `skill_file` | `name`, `path` | one file from that skill's directory: text, or base64 with its media type. At most 1 MiB, `truncated: true` rather than a silent cut |
-| `skill_run` | `name`, `script`, `args[]`, `confirm` | `{exitCode, stdout, stderr, truncated, durationMs}` |
+| `skill_run` | `name`, `script`, `args[]`, `confirmToken` | `{exitCode, stdout, stderr, truncated, durationMs}` |
 
 `skill_file` takes **one** path. The design of record specifies a `paths[]`
 batch (8 paths per call, 1 MiB per entry, 4 MiB per call, one bad path failing
@@ -127,12 +127,17 @@ runs and **what it is handed**; each has its own test.
   registration if you would give each of them every credential it holds.
 - **A non-zero exit is a normal, reported outcome** — exit code, stdout and
   stderr all come back. It is never an exception that loses the output.
-- **`skill_run` is confirm-gated.** Without `confirm: true` it starts no process
-  and returns a dry-run preview of exactly what would run: the interpreter, the
-  argv, the working directory, the timeout, and the **names** of the variables
-  the script would be handed.
+- **`skill_run` asks before it runs anything.** On a client that can show a
+  confirmation prompt (Claude Code) the user is asked there. Otherwise the first
+  call starts no process and returns `status: "confirmation-required"` with a
+  preview of exactly what would run — the interpreter, the argv, the working
+  directory, the timeout, and the **names** of the variables the script would be
+  handed — plus a `confirmToken`. Only a repeat call with the same arguments and
+  that token runs the script, once. A token is bound to that exact run: changing
+  the skill, script or argv is refused as `DRAFT_CHANGED`, and a used token as
+  `TOKEN_REUSED`. See [Confirmations](#confirmations).
 
-### Why the confirm gate is blanket
+### Why the confirmation gate is blanket
 
 The fleet convention gates mutating tools. Whether a given script mutates
 anything is something this server cannot know: it never reads a script, and it
@@ -247,6 +252,14 @@ and the hosted half is fail-closed.**
 `skill_list` reports which case it is (`grantFrom`, plus a `grantNote` in the
 hosted one) and lists a skill's declared-but-ungranted scripts, so "nothing
 runs" is never indistinguishable from "nothing was declared".
+
+### Confirmations
+
+| variable | default | |
+|---|---|---|
+| `MCP_CONFIRM_MODE` | `ask-user` | What a write does on a client that cannot show a confirmation prompt (claude.ai, Claude Desktop). `ask-user`: two steps — the first call does nothing and returns a preview plus a token, and the model must get your approval in chat before calling again with it. `auto`: the same two steps, but the model may use the token after reviewing the preview itself. `refuse`: writes are refused on such clients. A client that can show prompts (Claude Code) always gets the real prompt. An unrecognised value is treated as `refuse`. |
+| `MCP_CONFIRM_TTL_SECONDS` | `600` | How long a token stays valid. |
+| `MCP_CONFIRM_SECRET` | random per process | Signing key; set it only if tokens must survive a server restart. |
 
 ## Trust posture
 

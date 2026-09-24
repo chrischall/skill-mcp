@@ -7,7 +7,14 @@
  */
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { McpToolError, minifiedResult, schemaConfirm, toolAnnotations } from '@chrischall/mcp-utils';
+import {
+  McpToolError,
+  confirmTokenParam,
+  confirmationFromEnv,
+  minifiedResult,
+  requireConfirmationWithFallback,
+  toolAnnotations,
+} from '@chrischall/mcp-utils';
 import type { SkillMcpDeps } from '../deps.js';
 import type { DiscoveredSkill } from '../discovery.js';
 import { MAX_SKILL_MD_BYTES } from '../discovery.js';
@@ -346,7 +353,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     'skill_run',
     {
       description:
-        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Mutating: call it once without confirm to see exactly what would run, then again with confirm: true.",
+        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Asks the user to confirm first: a confirmation prompt where the client supports one; otherwise the first call returns a preview of exactly what would run and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).",
       annotations: {
         title: 'Run a declared skill script',
         readOnlyHint: false,
@@ -370,18 +377,19 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
           .max(MAX_ARGS)
           .optional()
           .describe('Arguments passed as an argv array. There is no shell: nothing here is interpreted.'),
-        confirm: schemaConfirm,
+        confirmToken: confirmTokenParam,
       }),
     },
-    async ({ name, script, args, confirm }) => {
+    async ({ name, script, args, confirmToken }, ctx) => {
       const skill = requireSkill(deps, name);
       const argv = args ?? [];
 
       /*
-       * The confirm gate, and why it is blanket rather than per-script.
+       * The confirmation gate, and why it is blanket rather than per-script.
        *
-       * The fleet convention is that every mutating tool takes `confirm` and,
-       * without it, makes no call and returns a dry-run preview. The question
+       * The fleet convention is that every mutating tool asks the user before
+       * it acts: an elicitation prompt where the client can show one, else a
+       * two-phase preview + confirmToken (MCP_CONFIRM_MODE). The question
        * here is whether a script counts as mutating, and the honest answer is
        * that this adapter cannot know: it never reads a script, and §9
        * deliberately refuses to analyse one, because a machine-generated
@@ -396,9 +404,29 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
        * helper and whose benefit is that the preview is the ONE surface where
        * a caller sees the exact argv, interpreter, cwd, timeout and the NAMES
        * of the variables the script will be handed before any of it happens.
+       *
+       * The preview is built — and every refusal in it raised — on EVERY call,
+       * before the gate, so a call that would be refused is refused without
+       * asking anyone. `willRun` is the token's payload: a token approved for
+       * one argv, script or skill does not start another.
        */
       const preview = await previewRun(deps, skill, script, argv);
-      if (confirm !== true) return minifiedResult(preview);
+      const gate = await requireConfirmationWithFallback(
+        ctx,
+        confirmationFromEnv({
+          action: 'skill.run',
+          message: 'Review and confirm running this skill script:',
+          details: preview.willRun,
+          tool: 'skill_run',
+          confirmToken,
+          subject: () => ({
+            target: `${skill.name}/${script}`,
+            payload: preview.willRun,
+            preview,
+          }),
+        }),
+      );
+      if (gate) return gate;
 
       const result = await runDeclaredScript({
         skill,
@@ -414,15 +442,16 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
 
 /**
  * Everything `skill_run` checks before it starts a process, rendered as the
- * dry-run body. Run for the preview AND for the real call, so a call that would
- * be refused is refused at the preview rather than accepted and refused later.
+ * preview the user confirms. Run on EVERY call, before the confirmation gate,
+ * so a call that would be refused is refused at the preview rather than
+ * accepted and refused later.
  */
 async function previewRun(
   deps: SkillMcpDeps,
   skill: DiscoveredSkill,
   script: string,
   args: string[],
-): Promise<Record<string, unknown>> {
+): Promise<{ dryRun: true; willRun: Record<string, unknown>; note: string }> {
   const declared = skill.scripts.find((entry) => entry.script === script);
   if (!declared) {
     const offered = skill.scripts.map((entry) => entry.script);
@@ -474,6 +503,6 @@ async function previewRun(
           }
         : {}),
     },
-    note: 'No process has been started. Re-run with confirm: true to execute. This server cannot tell what a script does — it only decides which script runs and what it is handed.',
+    note: 'No process has been started. It runs only once the user confirms it. This server cannot tell what a script does — it only decides which script runs and what it is handed.',
   };
 }
