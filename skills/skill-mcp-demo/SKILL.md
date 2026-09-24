@@ -33,8 +33,13 @@ Only a script named in `mcp-host.run` may be executed, and only through
 Run it to see the fence from the inside:
 
 ```
-skill_run(name: "skill-mcp-demo", script: "scripts/report.js", args: ["hello"], confirm: true)
+skill_run(name: "skill-mcp-demo", script: "scripts/report.js", args: ["hello"])
 ```
+
+`skill_run` asks the user to confirm first. Where the client cannot show a
+confirmation prompt, that first call starts nothing and returns a preview of
+exactly what would run plus a `confirmToken`; once the user approves, call again
+with the same arguments and `confirmToken: "<token>"`.
 
 ## What the fence does and does not do
 

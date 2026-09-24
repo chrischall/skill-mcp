@@ -33,7 +33,7 @@ Four tools, and they are the whole contract (`src/tools/skills.ts`).
 | `skill_list` | — | every skill: name, description, source, file count, which scripts may run |
 | `skill_load` | `name` | SKILL.md verbatim + a manifest of bundled files. Referenced files are NOT inlined |
 | `skill_file` | `name`, `paths[]` | one entry per path, in request order: text, or base64 + media type, or that path's own error |
-| `skill_run` | `name`, `script`, `args[]`, `confirm` | `{exitCode, stdout, stderr, truncated, durationMs}` |
+| `skill_run` | `name`, `script`, `args[]`, `confirmToken` | `{exitCode, stdout, stderr, truncated, durationMs}` |
 
 Skills are also projected as MCP **prompts** and **resources**
 (`skill://<name>/<path>`, `src/prompts.ts`). That projection is a second door,

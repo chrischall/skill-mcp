@@ -6,8 +6,8 @@
  * `resources/list` come back empty and the handshake stops advertising those
  * capabilities — so nothing may be reachable only as a prompt or a resource.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtemp, mkdir, open, writeFile, rm, realpath } from 'node:fs/promises';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { mkdtemp, mkdir, open, readFile, writeFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
@@ -22,6 +22,20 @@ import {
 
 let root = '';
 let harness: Awaited<ReturnType<typeof createTestHarness>>;
+let deps: Awaited<ReturnType<typeof createDeps>>;
+
+/**
+ * How many times scripts/echo.js has actually started. The fixture appends one
+ * line to `<root>/runs.log` per run (its cwd is the skill dir), so a gated call
+ * that must not start a process can be pinned to "the count did not move".
+ */
+async function runCount(): Promise<number> {
+  try {
+    return (await readFile(join(root, 'runs.log'), 'utf8')).split('\n').filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
 
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 const HUGE_BYTES = 256 * 1024 * 1024;
@@ -54,7 +68,10 @@ beforeAll(async () => {
       '',
     ].join('\n'),
   );
-  await writeFile(join(demo, 'scripts', 'echo.js'), `process.stdout.write('ran ' + process.argv.slice(2).join(','));\n`);
+  await writeFile(
+    join(demo, 'scripts', 'echo.js'),
+    `require('node:fs').appendFileSync('../runs.log', 'run\\n');\nprocess.stdout.write('ran ' + process.argv.slice(2).join(','));\n`,
+  );
   await writeFile(join(demo, 'scripts', 'py.py'), 'print(1)\n');
   await writeFile(join(demo, 'references', 'notes.md'), 'Some notes.\n');
   await writeFile(join(demo, 'references', 'pixel.png'), PNG);
@@ -102,7 +119,7 @@ beforeAll(async () => {
   // The hosted shape: the roots injected by the runner AND the owner's grant
   // supplied explicitly. Without `MCP_SKILL_RUN` a hosted server grants NOTHING
   // (config.ts) — pinned by "the hosted default" test below.
-  const deps = await createDeps({
+  deps = await createDeps({
     MCP_SKILLS_PATH: root,
     MCP_SKILL_RUN: JSON.stringify([{ skill: 'demo', script: 'scripts/echo.js' }]),
   });
@@ -135,13 +152,14 @@ describe('the tool roster', () => {
       properties: { name: { type: 'string' }, paths: { type: 'array', items: { type: 'string' } } },
       required: ['name', 'paths'],
     });
+    expect(byName.get('skill_run')).not.toHaveProperty('properties.confirm');
     expect(byName.get('skill_run')).toMatchObject({
       type: 'object',
       properties: {
         name: { type: 'string' },
         script: { type: 'string' },
         args: { type: 'array', items: { type: 'string' } },
-        confirm: {},
+        confirmToken: { type: 'string' },
       },
       required: expect.arrayContaining(['name', 'script']),
     });
@@ -385,7 +403,6 @@ describe('the hosted default grant', () => {
       const run = await local.callTool('skill_run', {
         name: 'demo',
         script: 'scripts/echo.js',
-        confirm: true,
       });
       expect(run.isError).toBe(true);
       expect(JSON.stringify(run.content)).toMatch(/not declared|not granted/i);
@@ -412,27 +429,146 @@ describe('the hosted default grant', () => {
   });
 });
 
+interface PhaseOne {
+  status: string;
+  dispatched: boolean;
+  action: string;
+  confirmToken: string;
+  preview: {
+    dryRun: boolean;
+    willRun: {
+      skill: string;
+      interpreter: string;
+      argv: string[];
+      cwd: string;
+      timeoutMs: number;
+      envNames: string[];
+    };
+    note: string;
+  };
+}
+
+/** Phase 1 of the token flow: the preview and a confirmToken, and no process. */
+async function phaseOne(args: Record<string, unknown>, h = harness): Promise<PhaseOne> {
+  return parseToolResult<PhaseOne>(await h.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js', ...args }));
+}
+
 describe('skill_run', () => {
-  it('is confirm-gated: without confirm it previews and starts no process', async () => {
-    const body = parseToolResult<{ dryRun: boolean; willRun: { argv: string[]; cwd: string } }>(
-      await harness.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js', args: ['a'] }),
-    );
-    expect(body.dryRun).toBe(true);
-    expect(body.willRun.argv).toEqual(['scripts/echo.js', 'a']);
-    expect(body.willRun.cwd).toContain('demo');
+  const savedEnv = { ...process.env };
+  afterEach(() => {
+    for (const key of Object.keys(process.env)) if (!(key in savedEnv)) delete process.env[key];
+    Object.assign(process.env, savedEnv);
   });
 
-  it('runs the script with confirm: true', async () => {
+  it('phase 1 returns the full preview and a confirmToken, and starts no process', async () => {
+    const before = await runCount();
+    const body = await phaseOne({ args: ['a'] });
+    expect(body.status).toBe('confirmation-required');
+    expect(body.dispatched).toBe(false);
+    expect(body.action).toBe('skill.run');
+    expect(body.confirmToken).toEqual(expect.any(String));
+    expect(body.preview.dryRun).toBe(true);
+    expect(body.preview.willRun).toMatchObject({
+      skill: 'demo',
+      interpreter: 'node',
+      argv: ['scripts/echo.js', 'a'],
+      envNames: [],
+    });
+    expect(body.preview.willRun.cwd).toContain('demo');
+    expect(body.preview.willRun.timeoutMs).toEqual(expect.any(Number));
+    expect(body.preview.note).toMatch(/No process has been started/);
+    expect(await runCount()).toBe(before);
+  });
+
+  it('phase 2 with the returned confirmToken runs the script exactly once', async () => {
+    const { confirmToken } = await phaseOne({ args: ['x', 'y'] });
+    const before = await runCount();
     const body = parseToolResult<{ exitCode: number; stdout: string }>(
       await harness.callTool('skill_run', {
         name: 'demo',
         script: 'scripts/echo.js',
         args: ['x', 'y'],
-        confirm: true,
+        confirmToken,
       }),
     );
     expect(body.exitCode).toBe(0);
     expect(body.stdout).toBe('ran x,y');
+    expect(await runCount()).toBe(before + 1);
+  });
+
+  it('refuses a replayed token with TOKEN_REUSED and starts no second process', async () => {
+    const { confirmToken } = await phaseOne({ args: ['once'] });
+    const call = { name: 'demo', script: 'scripts/echo.js', args: ['once'], confirmToken };
+    await harness.callTool('skill_run', call);
+    const before = await runCount();
+    const replay = await harness.callTool('skill_run', call);
+    expect(replay.isError).toBe(true);
+    expect(parseToolResult<{ error: string }>(replay).error).toBe('TOKEN_REUSED');
+    expect(await runCount()).toBe(before);
+  });
+
+  it('refuses a token whose arguments changed with DRAFT_CHANGED and starts no process', async () => {
+    const { confirmToken } = await phaseOne({ args: ['approved'] });
+    const before = await runCount();
+    const changed = await harness.callTool('skill_run', {
+      name: 'demo',
+      script: 'scripts/echo.js',
+      args: ['something-else'],
+      confirmToken,
+    });
+    expect(changed.isError).toBe(true);
+    const body = parseToolResult<{ error: string; preview: PhaseOne['preview'] }>(changed);
+    expect(body.error).toBe('DRAFT_CHANGED');
+    // The fresh preview names what WOULD run now, so the user can re-approve it.
+    expect(body.preview.willRun.argv).toEqual(['scripts/echo.js', 'something-else']);
+    expect(await runCount()).toBe(before);
+  });
+
+  it('refuses outright under MCP_CONFIRM_MODE=refuse, starting no process', async () => {
+    process.env.MCP_CONFIRM_MODE = 'refuse';
+    const before = await runCount();
+    const body = parseToolResult<{ reason: string; dispatched: boolean }>(
+      await harness.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js' }),
+    );
+    expect(body.reason).toBe('confirmation-unsupported');
+    expect(body.dispatched).toBe(false);
+    expect(await runCount()).toBe(before);
+  });
+
+  it('runs on a client that accepts the confirmation prompt', async () => {
+    const prompts: unknown[] = [];
+    const local = await createTestHarness((server) => registerSkillTools(server, deps), {
+      elicitation: async (request) => {
+        prompts.push(request);
+        return { action: 'accept', content: { confirmed: true } };
+      },
+    });
+    try {
+      const before = await runCount();
+      const body = parseToolResult<{ exitCode: number; stdout: string }>(
+        await local.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js', args: ['ok'] }),
+      );
+      expect(body.stdout).toBe('ran ok');
+      expect(await runCount()).toBe(before + 1);
+      // The prompt names what will run, not merely that something will.
+      expect(JSON.stringify(prompts)).toContain('scripts/echo.js');
+    } finally {
+      await local.close();
+    }
+  });
+
+  it('starts no process on a client that declines the confirmation prompt', async () => {
+    const local = await createTestHarness((server) => registerSkillTools(server, deps), {
+      elicitation: async () => ({ action: 'decline' }),
+    });
+    try {
+      const before = await runCount();
+      const result = await local.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js', args: ['no'] });
+      expect(JSON.stringify(result.content)).not.toContain('ran no');
+      expect(await runCount()).toBe(before);
+    } finally {
+      await local.close();
+    }
   });
 
   // Every response here is minified, the confirm-gated run receipt included.
@@ -443,11 +579,12 @@ describe('skill_run', () => {
   // `\s+`) would corrupt exactly the payload this tool exists to return.
   it('minifies the run receipt without touching the script output inside it', async () => {
     const shaped = 'line one.\n\n    indented.   ';
+    const { confirmToken } = await phaseOne({ args: [shaped] });
     const raw = await harness.callTool('skill_run', {
       name: 'demo',
       script: 'scripts/echo.js',
       args: [shaped],
-      confirm: true,
+      confirmToken,
     });
     const text = (raw as { content: Array<{ text: string }> }).content[0].text;
     // None of OUR whitespace: the serialised receipt is a single line.
@@ -456,14 +593,32 @@ describe('skill_run', () => {
     expect(parseToolResult<{ stdout: string }>(raw).stdout).toBe(`ran ${shaped}`);
   });
 
-  it('refuses an undeclared script even with confirm', async () => {
+  it('refuses an undeclared script even with a confirmToken', async () => {
     const result = await harness.callTool('skill_run', {
       name: 'demo',
       script: 'references/notes.md',
-      confirm: true,
+      confirmToken: 'anything',
     });
     expect(result.isError).toBe(true);
     expect(JSON.stringify(result.content)).toMatch(/not declared/i);
+  });
+
+  it('refuses an undeclared script on a client that would accept the prompt, without asking', async () => {
+    let asked = false;
+    const local = await createTestHarness((server) => registerSkillTools(server, deps), {
+      elicitation: async () => {
+        asked = true;
+        return { action: 'accept', content: { confirmed: true } };
+      },
+    });
+    try {
+      const result = await local.callTool('skill_run', { name: 'demo', script: 'references/notes.md' });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toMatch(/not declared/i);
+      expect(asked).toBe(false);
+    } finally {
+      await local.close();
+    }
   });
 
   it('previews the refusal too, rather than accepting a call it would refuse', async () => {
