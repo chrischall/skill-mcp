@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.1](https://github.com/chrischall/skill-mcp/compare/v1.1.0...v1.1.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* bump @chrischall/mcp-utils to 2.9.0 ([#44](https://github.com/chrischall/skill-mcp/issues/44)) ([e3a9972](https://github.com/chrischall/skill-mcp/commit/e3a99721eb14aae78093f0d56a5e27a6d4f9df5f))
+* **deps:** bump @chrischall/mcp-utils to 2.10.0 ([#45](https://github.com/chrischall/skill-mcp/issues/45)) ([65d36b5](https://github.com/chrischall/skill-mcp/commit/65d36b56c5a9cc60d9439e87f52b27b2e8ad3db9))
+* **deps:** bump @chrischall/mcp-utils to 2.12.0 ([#47](https://github.com/chrischall/skill-mcp/issues/47)) ([c202754](https://github.com/chrischall/skill-mcp/commit/c202754bd52ce642b22615271ad35ebe6b2219ee))
+* **deps:** bump @chrischall/mcp-utils to 2.13.0 ([#48](https://github.com/chrischall/skill-mcp/issues/48)) ([1b548b1](https://github.com/chrischall/skill-mcp/commit/1b548b1aa55547a7d28c6262b02f231068b884f8))
+* **deps:** bump the production-dependencies group with 2 updates ([#42](https://github.com/chrischall/skill-mcp/issues/42)) ([3eed6ed](https://github.com/chrischall/skill-mcp/commit/3eed6ed5c36d0a52664d8582d89a17750bca8a00))
+* keep write approvals valid across a hosted restart (mcp-utils 2.11.0) ([#46](https://github.com/chrischall/skill-mcp/issues/46)) ([1fe7dd0](https://github.com/chrischall/skill-mcp/commit/1fe7dd0b2fb9b214c0930c8df185f567dd87a23d))
+
 ## [1.1.0](https://github.com/chrischall/skill-mcp/compare/v1.0.4...v1.1.0) (2026-09-24)
 
 
