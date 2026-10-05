@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/chrischall/skill-mcp/compare/v1.1.1...v1.1.2) (2026-10-05)
+
+
+### Bug Fixes
+
+* **deps:** require @chrischall/mcp-utils 2.14.0 and MCP SDK 2.3.0 ([#49](https://github.com/chrischall/skill-mcp/issues/49)) ([99f8aa2](https://github.com/chrischall/skill-mcp/commit/99f8aa2c4311caa72151395892087f36c0de3756))
+
 ## [1.1.1](https://github.com/chrischall/skill-mcp/compare/v1.1.0...v1.1.1) (2026-10-03)
 
 
