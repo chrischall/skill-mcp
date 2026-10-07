@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.0](https://github.com/chrischall/skill-mcp/compare/v1.1.2...v1.2.0) (2026-10-07)
+
+
+### Features
+
+* **deps:** honour MCP_CONFIRM_ELICITATION=off for confirmation prompts (mcp-utils 2.15.0) ([#51](https://github.com/chrischall/skill-mcp/issues/51)) ([e71edb2](https://github.com/chrischall/skill-mcp/commit/e71edb2e340b1a37e298a1e5aa0cb762a3e85220))
+
+
+### Documentation
+
+* document MCP_CONFIRM_ELICITATION ([#53](https://github.com/chrischall/skill-mcp/issues/53)) ([7535289](https://github.com/chrischall/skill-mcp/commit/753528972c94b171f8da0ae25c0c117993c07ae6))
+
 ## [1.1.2](https://github.com/chrischall/skill-mcp/compare/v1.1.1...v1.1.2) (2026-10-05)
 
 
