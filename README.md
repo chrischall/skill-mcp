@@ -44,16 +44,16 @@ order.
 | --- | --- | --- |
 | `skill_list` | — | every skill found: name, description, when to use it, file count, whether it declares runnable scripts and **exactly which**; plus `problems`, so an empty list is never a mystery |
 | `skill_load` | `name` | the SKILL.md body **verbatim**, plus a manifest of the bundle's files. Referenced files are not inlined — that is what `skill_file` is for |
-| `skill_file` | `name`, `path` | one file from that skill's directory: text, or base64 with its media type. At most 1 MiB, `truncated: true` rather than a silent cut |
+| `skill_file` | `name`, `paths[]` | one entry per path, in request order: text, or base64 with its media type, or that path's own error. At most 1 MiB per entry, `truncated: true` rather than a silent cut |
 | `skill_run` | `name`, `script`, `args[]`, `confirmToken` | `{exitCode, stdout, stderr, truncated, durationMs}` |
 
-`skill_file` takes **one** path. The design of record specifies a `paths[]`
-batch (8 paths per call, 1 MiB per entry, 4 MiB per call, one bad path failing
-only its own slot); shipping the singular form is a deliberate deferral, not an
-oversight, and those three bounds are what a later batching change has to
-honour. Read the caps as bounds on this server's own heap: they cap the
-**allocation**, not only the answer, because a hosted child has a hard 256 MiB
-data limit and a bundle may be larger than that.
+`skill_file` takes a `paths[]` batch, so the files a SKILL.md points at come
+back in one round trip: at most 8 paths per call, 1 MiB per entry and 4 MiB per
+call (summed from file sizes before a byte is read, so the answer never depends
+on the order the paths were listed in). One bad path fails only its own entry —
+the rest of the batch is still served. Read the caps as bounds on this server's
+own heap: they cap the **allocation**, not only the answer, because a hosted
+child has a hard 256 MiB data limit and a bundle may be larger than that.
 
 Each skill is **also** registered as an MCP prompt (its body is the message) and
 each bundled file as a resource (`skill://<name>/<path>`), because a client that
