@@ -161,7 +161,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     {
       description:
         'List every Agent Skill this server found: name, description, when to use it, how many files it bundles, and the exact scripts (if any) that may be executed with skill_run. Also reports anything that could not be read, so an empty list is never a mystery.',
-      annotations: toolAnnotations({ title: 'List skills', readOnly: true, idempotent: true }),
+      annotations: toolAnnotations({ title: 'List skills', readOnly: true, idempotent: true, openWorld: false }),
       inputSchema: z.object({}),
     },
     () => {
@@ -240,7 +240,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     {
       description:
         "Load one skill's SKILL.md instructions verbatim, plus a manifest of the files it bundles. Referenced files are NOT inlined — read them by name with skill_file.",
-      annotations: toolAnnotations({ title: 'Load a skill', readOnly: true, idempotent: true }),
+      annotations: toolAnnotations({ title: 'Load a skill', readOnly: true, idempotent: true, openWorld: false }),
       inputSchema: z.object({ name: NameArg }),
     },
     ({ name }) => {
@@ -272,7 +272,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     {
       description:
         "Read files a skill bundles. Paths are relative to that skill's own directory; text comes back as text, anything else as base64 with its media type. Ask for every file you need in ONE call — a SKILL.md usually points at several.",
-      annotations: toolAnnotations({ title: 'Read skill files', readOnly: true, idempotent: true }),
+      annotations: toolAnnotations({ title: 'Read skill files', readOnly: true, idempotent: true, openWorld: false }),
       inputSchema: z.object({ name: NameArg, paths: PathsArg }),
     },
     async ({ name, paths }) => {

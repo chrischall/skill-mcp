@@ -56,7 +56,7 @@
     },
     {
       "name": "skill_file",
-      "description": "Read one file a skill bundles, resolved inside that skill's own directory"
+      "description": "Read files a skill bundles, resolved inside that skill's own directory — every path needed in one call"
     },
     {
       "name": "skill_run",
