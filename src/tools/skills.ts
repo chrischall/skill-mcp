@@ -453,6 +453,12 @@ async function previewRun(
   script: string,
   args: string[],
 ): Promise<{ dryRun: true; willRun: Record<string, unknown>; note: string }> {
+  if (deps.runBlocked !== undefined) {
+    throw new McpToolError(`no script may run on this server: ${deps.runBlocked}`, {
+      hint: "Every skill's instructions and files are still served through skill_load and skill_file.",
+    });
+  }
+
   const declared = skill.scripts.find((entry) => entry.script === script);
   if (!declared) {
     const offered = skill.scripts.map((entry) => entry.script);

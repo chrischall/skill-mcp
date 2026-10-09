@@ -77,8 +77,10 @@ never the only one — everything reachable there is reachable through the tools
   `/proc/<ppid>/environ`, which is the ORIGINAL `execve` block, not
   `process.env`. Every variable is re-homed (assigned to itself, so `setenv`
   copies it to the heap) BEFORE the block is zeroed through `/proc/self/mem` —
-  reverse that order and `getenv` reads zeros. It never throws; a refusal is a
-  stderr line and the server boots. `tests/scrub-environ.test.ts` proves it
+  reverse that order and `getenv` reads zeros. It never throws and the server
+  always boots; a refusal is a stderr line, and HOSTED it also refuses every
+  `skill_run` and lists `environ-unscrubbed` in `skill_list` (`src/deps.ts`)
+  unless the owner sets `MCP_SKILL_ALLOW_UNSCRUBBED=1`. Standalone stays open. `tests/scrub-environ.test.ts` proves it
   against a real kernel on Linux CI (skipped on macOS).
 - **Every path is checked twice, on the STRING and on the resolved real path**
   (`src/paths.ts`). No leading `/`, no `.`/`..` segment, no backslash, no

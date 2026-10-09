@@ -121,7 +121,9 @@ export interface DiscoveryProblem {
     | 'file-limit'
     | 'skill-limit'
     /** The registration granted a script the skill does not declare (`grant.ts`). */
-    | 'grant';
+    | 'grant'
+    /** Hosted, and the exec-time environment block could not be wiped (`deps.ts`). */
+    | 'environ-unscrubbed';
   detail: string;
 }
 

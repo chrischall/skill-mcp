@@ -119,7 +119,10 @@ runs and **what it is handed**; each has its own test.
   A script runs as the same uid as this server. On Linux a same-uid process can
   read `/proc/<parent pid>/environ`, so at boot the server wipes that
   exec-time environment block (`src/scrub-environ.ts`; `process.env` keeps
-  every value) and that one-line read comes back empty. The values still live
+  every value) and that one-line read comes back empty. If a kernel or sandbox
+  refuses that wipe, a **hosted** server runs no script at all — `skill_run`
+  refuses and `skill_list` reports `environ-unscrubbed` — unless the owner sets
+  `MCP_SKILL_ALLOW_UNSCRUBBED=1`; standalone it only warns on stderr. The values still live
   in the server's memory, reachable through `ptrace` or `/proc/<pid>/mem` on a
   kernel at Yama `ptrace_scope = 0`. Real isolation between skills that do not
   trust each other needs the tier (a distinct uid for scripts, `/proc` mounted
@@ -221,6 +224,7 @@ its instructions, and never the rest of the listing.
 | `MCP_SKILLS_PATH` | `:`-separated slot roots, injected by mcp-host's runner. Wins over everything |
 | `SKILLS_DIR` | the same thing for local use. Read only when `MCP_SKILLS_PATH` is unset |
 | `MCP_SKILL_RUN` | optional JSON `[{skill, script, env?}]` — the owner's grant. **Narrow-only** |
+| `MCP_SKILL_ALLOW_UNSCRUBBED` | `1` lets a hosted server run scripts even though its exec-time environment block could not be wiped (see the env allowlist note). Off by default |
 | *(neither set)* | this package's own `skills/` directory |
 
 `MCP_SKILL_RUN` deserves the emphasis. When it is present, what may run is the
