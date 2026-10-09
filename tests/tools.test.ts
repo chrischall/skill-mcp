@@ -629,3 +629,72 @@ describe('skill_run', () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe('the skill_run preview names exactly what the script is handed', () => {
+  let envRoot = '';
+
+  beforeAll(async () => {
+    envRoot = await realpath(await mkdtemp(join(tmpdir(), 'skill-env-')));
+    const dir = join(envRoot, 'needs-key');
+    await mkdir(join(dir, 'scripts'), { recursive: true });
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      [
+        '---',
+        'name: needs-key',
+        'description: Asks for an API key.',
+        'mcp-host:',
+        '  version: 1',
+        '  run:',
+        '    - script: scripts/env.js',
+        '      interpreter: node',
+        '      env: [API_KEY]',
+        '---',
+        'x',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(join(dir, 'scripts', 'env.js'), `process.stdout.write('ok');\n`);
+  });
+
+  afterAll(async () => {
+    if (envRoot) await rm(envRoot, { recursive: true, force: true });
+  });
+
+  const sourceEnv = (extra: Record<string, string>) => ({
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: '/home/someone',
+    TZ: 'UTC',
+    API_KEY: 'secret-value',
+    UNRELATED_TOKEN: 'never-handed',
+    ...extra,
+  });
+
+  async function previewAndRun(env: Record<string, string>) {
+    const local = await createTestHarness(async (server) =>
+      registerSkillTools(server, await createDeps(env)),
+    );
+    try {
+      const call = { name: 'needs-key', script: 'scripts/env.js' };
+      const phase1 = parseToolResult<{
+        confirmToken: string;
+        preview: { willRun: { envNames: string[]; envWarning?: string } };
+      }>(await local.callTool('skill_run', call));
+      const run = parseToolResult<{ exitCode: number; env: string[] }>(
+        await local.callTool('skill_run', { ...call, confirmToken: phase1.confirmToken }),
+      );
+      return { willRun: phase1.preview.willRun, run };
+    } finally {
+      await local.close();
+    }
+  }
+
+  it('lists the ambient and injected names as well as the granted ones (fleet-audit#726)', async () => {
+    const { willRun, run } = await previewAndRun(sourceEnv({ SKILLS_DIR: envRoot }));
+    expect(run.exitCode).toBe(0);
+    // The preview is the one surface where a caller sees what is handed over
+    // BEFORE it happens, so it must agree with the receipt name for name.
+    expect(willRun.envNames).toEqual(run.env);
+    expect(willRun.envNames).toEqual(['API_KEY', 'HOME', 'PATH', 'TZ']);
+  });
+});

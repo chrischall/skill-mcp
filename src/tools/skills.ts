@@ -20,6 +20,7 @@ import type { DiscoveredSkill } from '../discovery.js';
 import { MAX_SKILL_MD_BYTES } from '../discovery.js';
 import { MAX_ARGS, interpreterNames, isRunnableInterpreter, runDeclaredScript } from '../run.js';
 import { resolveInsideSkill } from '../paths.js';
+import { buildScriptEnv } from '../env.js';
 import { readCapped } from '../read-capped.js';
 import { stat } from 'node:fs/promises';
 
@@ -483,10 +484,15 @@ async function previewRun(
   // out of the tree is refused at the preview too.
   await resolveInsideSkill(skill.dir, script);
 
+  // Computed by buildScriptEnv itself — the function the run uses — so the
+  // preview names the variables the script will actually be handed (the
+  // ambient allowlist, the injected names and the granted ones) and no others.
+  // A hand-rolled copy listed only the granted names and drifted from the
+  // receipt (chrischall/fleet-audit#726).
+  const envNames = Object.keys(buildScriptEnv(declared.env, deps.sourceEnv)).sort();
   // `typeof === 'string'`, matching buildScriptEnv exactly: `!== undefined` is
-  // true for a name inherited from Object.prototype, and the preview must name
-  // the variables the script will actually be handed and no others.
-  const env = declared.env.filter((name) => typeof deps.sourceEnv[name] === 'string');
+  // true for a name inherited from Object.prototype.
+  const envNotSet = declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string');
   return {
     dryRun: true,
     willRun: {
@@ -496,12 +502,8 @@ async function previewRun(
       cwd: skill.dir,
       timeoutMs: declared.timeoutMs,
       // NAMES only, never values: this body is a tool result.
-      envNames: env,
-      ...(declared.env.length > env.length
-        ? {
-            envNotSet: declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string'),
-          }
-        : {}),
+      envNames,
+      ...(envNotSet.length > 0 ? { envNotSet } : {}),
     },
     note: 'No process has been started. It runs only once the user confirms it. This server cannot tell what a script does — it only decides which script runs and what it is handed.',
   };
