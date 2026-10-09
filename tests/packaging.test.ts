@@ -13,7 +13,7 @@
  * plugin names stay unscoped so the whole identity is one word.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTestHarness } from '@chrischall/mcp-utils/test';
@@ -67,6 +67,17 @@ describe('versions agree across every manifest', () => {
     expect(plugin.version).toBe(version);
     expect((marketplace.metadata as { version: string }).version).toBe(version);
     expect((marketplace.plugins as { version: string }[])[0]?.version).toBe(version);
+  });
+});
+
+describe('.claude-plugin/plugin.json', () => {
+  // Claude Code reads the MCP config from `mcpServers`; an `mcp` key is an
+  // unknown field it ignores at load time. It only "worked" here because
+  // ./.mcp.json is the default — copies with a non-default path broke installs.
+  it('declares its MCP config under mcpServers, never mcp, pointing at a real file', () => {
+    expect(plugin).not.toHaveProperty('mcp');
+    expect(plugin.mcpServers).toBe('./.mcp.json');
+    expect(existsSync(join(ROOT, plugin.mcpServers as string))).toBe(true);
   });
 });
 
