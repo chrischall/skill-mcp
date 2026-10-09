@@ -135,7 +135,8 @@ runs and **what it is handed**; each has its own test.
 - **A non-zero exit is a normal, reported outcome** — exit code, stdout and
   stderr all come back. It is never an exception that loses the output.
 - **`skill_run` asks before it runs anything.** On a client that can show a
-  confirmation prompt (Claude Code) the user is asked there. Otherwise the first
+  confirmation prompt (Claude Code) the user is asked there, unless the server
+  sets `MCP_CONFIRM_ELICITATION=off`. Otherwise the first
   call starts no process and returns `status: "confirmation-required"` with a
   preview of exactly what would run — the interpreter, the argv, the working
   directory, the timeout, and the **names** of the variables the script would be

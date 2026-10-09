@@ -354,7 +354,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     'skill_run',
     {
       description:
-        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Asks the user to confirm first: a confirmation prompt where the client supports one; otherwise the first call returns a preview of exactly what would run and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).",
+        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Asks the user to confirm first: a confirmation prompt where the client supports one (unless MCP_CONFIRM_ELICITATION=off); otherwise the first call returns a preview of exactly what would run and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).",
       annotations: {
         title: 'Run a declared skill script',
         readOnlyHint: false,
