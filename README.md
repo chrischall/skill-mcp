@@ -73,7 +73,11 @@ the bundle, a symlink leading out of the root or out of a skill, a filename the
 read tools could not address. One bad skill costs itself and never the listing,
 and there is no third outcome where something is dropped in silence — a
 symlinked skill directory is **served** when it stays inside the root (so
-`skills/foo -> ../shared/foo` works) and **reported** when it does not.
+`skills/foo -> ../shared/foo` works) and **reported** when it does not. It is
+served under its *target* directory's name — `skills/foo -> ../bar` is the skill
+`bar`, reported as a `name-mismatch` so a grant is written against the right
+name — and a directory reached twice (a link to a skill that is also listed
+directly) is one skill, not a duplicate.
 
 ## The execution fence
 

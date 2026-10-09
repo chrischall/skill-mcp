@@ -360,6 +360,30 @@ describe('containment at discovery', () => {
     expect(found.problems.find((p) => p.reason === 'symlink-escape')).toBeUndefined();
   });
 
+  it('serves a skill ONCE when a symlink inside the root aliases it, rather than refusing it as its own duplicate (fleet-audit#722)', async () => {
+    // root/bar is a skill, and root/skills/foo -> ../bar reaches the same real
+    // directory a second time. One directory is not a collision.
+    await skill(join(root, 'bar'), 'name: bar\ndescription: aliased');
+    await mkdir(join(root, 'skills'), { recursive: true });
+    await symlink(join(root, 'bar'), join(root, 'skills', 'foo'));
+
+    const found = await discoverSkills([root]);
+    expect(found.skills.map((s) => s.name)).toEqual(['bar']);
+    expect(found.problems.find((p) => p.reason === 'duplicate-name')).toBeUndefined();
+    // The link's own name is not the skill's name, and a grant keyed on "foo"
+    // would match nothing — so that is said rather than left to be discovered.
+    const renamed = found.problems.find((p) => p.reason === 'name-mismatch');
+    expect(renamed?.path).toBe(join(root, 'skills', 'foo'));
+    expect(renamed?.detail).toMatch(/"bar"/);
+  });
+
+  it('serves a skill once when the same root is configured twice', async () => {
+    await skill(join(root, 'solo'), 'name: solo\ndescription: d');
+    const found = await discoverSkills([root, root]);
+    expect(found.skills.map((s) => s.name)).toEqual(['solo']);
+    expect(found.problems.find((p) => p.reason === 'duplicate-name')).toBeUndefined();
+  });
+
   it('refuses a SKILL.md that is a symlink out of its own skill directory', async () => {
     await writeFile(join(root, 'SECRET.md'), '---\nname: pwned\ndescription: not this skill\n---\ntop secret\n');
     await mkdir(join(root, 'victim'), { recursive: true });

@@ -453,7 +453,20 @@ async function candidates(
       // never was — plain files are skipped here without comment.
       if (link && !(await isDirectory(real))) continue;
 
-      if (await isFile(join(real, 'SKILL.md'))) dirs.push(real);
+      const isSkill = await isFile(join(real, 'SKILL.md'));
+      // A skill is named by its REAL directory (the grant keys on it), so a
+      // link whose own name differs serves the skill under the target's name.
+      // Said rather than left to be found: a grant written against the link's
+      // name would silently match nothing (chrischall/fleet-audit#722).
+      if (isSkill && link && entry.name !== basename(real)) {
+        problems.push({
+          path: dir,
+          reason: 'name-mismatch',
+          detail: `this entry is a symlink to ${real}, and a skill is served under its real directory's name; serving it as "${basename(real)}", which is also the name a grant must use`,
+        });
+      }
+
+      if (isSkill) dirs.push(real);
       else if (deferred) continue;
       else nonSkill.push(real);
     }
@@ -486,6 +499,11 @@ async function candidates(
 export async function discoverSkills(roots: string[]): Promise<Catalog> {
   const problems: DiscoveryProblem[] = [];
   const found: DiscoveredSkill[] = [];
+  // Every candidate is a REAL path, so one directory reached twice — through a
+  // symlink alias inside the root, or a root configured twice — is read once.
+  // Only DISTINCT directories can collide; refusing an alias as its own
+  // duplicate made the skill vanish (chrischall/fleet-audit#722).
+  const seen = new Set<string>();
 
   for (const root of roots) {
     let realRoot: string;
@@ -503,6 +521,8 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
 
     const { dirs, nonSkill } = await candidates(realRoot, problems);
     for (const dir of nonSkill) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
       problems.push({
         path: dir,
         reason: 'no-skill-md',
@@ -511,6 +531,8 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
     }
 
     for (const dir of dirs) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
       const skill = await readSkill(dir, root, problems);
       if (skill) found.push(skill);
     }
