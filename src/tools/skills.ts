@@ -419,6 +419,12 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
           message: 'Review and confirm running this skill script:',
           details: preview.willRun,
           tool: 'skill_run',
+          // A local, single-principal server: no signed-in account to bind.
+          account: undefined,
+          // The validated arguments (confirmToken is dropped by mcp-utils):
+          // a token approved for one argv, script or skill authorises no other.
+          // argv (not the raw `args`) so an omitted and an empty argv bind alike.
+          args: { name, script, args: argv },
           confirmToken,
           subject: () => ({
             target: `${skill.name}/${script}`,
