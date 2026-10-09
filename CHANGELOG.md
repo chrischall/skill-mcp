@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.1](https://github.com/chrischall/skill-mcp/compare/v1.2.0...v1.2.1) (2026-10-09)
+
+
+### Bug Fixes
+
+* annotate tools truthfully and sync manifests with the served tools ([#62](https://github.com/chrischall/skill-mcp/issues/62)) ([1228744](https://github.com/chrischall/skill-mcp/commit/1228744a98f68acbe540c996c25d8925e26f7d70))
+* declare the plugin MCP config under the mcpServers key Claude Code reads ([#63](https://github.com/chrischall/skill-mcp/issues/63)) ([6befa51](https://github.com/chrischall/skill-mcp/commit/6befa5104f9bf115390dbdf953dade70447c1a0b))
+* **deps:** bump @modelcontextprotocol/server ([#60](https://github.com/chrischall/skill-mcp/issues/60)) ([5c66a33](https://github.com/chrischall/skill-mcp/commit/5c66a3323c2773a62442ffa8ad00f533c8cec25f))
+* **deps:** update @chrischall/mcp-utils to 3.0.0 ([#61](https://github.com/chrischall/skill-mcp/issues/61)) ([a5cb13d](https://github.com/chrischall/skill-mcp/commit/a5cb13d389681a678093cd293820051edf9cd983))
+* resolve low-severity audit findings ([#54](https://github.com/chrischall/skill-mcp/issues/54)) ([aac6c6b](https://github.com/chrischall/skill-mcp/commit/aac6c6b44c7ae6a465896fd0a45553a4ba16c876))
+
+
+### Documentation
+
+* document skill_run preview fields and skill_list problem reasons ([#57](https://github.com/chrischall/skill-mcp/issues/57)) ([9377b17](https://github.com/chrischall/skill-mcp/commit/9377b17962dba7cc84565b70a20798d95aabc199))
+
 ## [1.2.0](https://github.com/chrischall/skill-mcp/compare/v1.1.2...v1.2.0) (2026-10-07)
 
 
