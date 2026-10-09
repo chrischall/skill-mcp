@@ -94,7 +94,7 @@ never the only one — everything reachable there is reachable through the tools
   for the real size, then read at most `maxBytes + 1` — the one extra byte is
   what decides `truncated` without a second syscall.
 - **Caps are stated, not discovered.** `MAX_SKILLS` 32,
-  `MAX_FILES_PER_SKILL` 2000, `MAX_SKILL_MD_BYTES` 256 KiB,
+  `MAX_FILES_PER_SKILL` 2000, `MAX_DIRS_PER_SKILL` 2000, `MAX_SKILL_MD_BYTES` 256 KiB,
   `MAX_FRONTMATTER_BYTES` 64 KiB, `MAX_FILE_BYTES` 1 MiB,
   `MAX_FILE_PATHS` 8 and `MAX_BATCH_BYTES` 4 MiB for one `skill_file` call,
   `MAX_STREAM_BYTES` 1 MiB and `MAX_TIMEOUT_MS` 300 s for a run,

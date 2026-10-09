@@ -180,6 +180,23 @@ describe('robustness', () => {
     expect(problems.map((p) => p.reason)).toEqual(['file-limit']);
   });
 
+  it('stops the walk at a DIRECTORY cap too, so a tree of empty directories is bounded (fleet-audit#723)', async () => {
+    // The file cap is checked only when a regular file turns up, so a bundle
+    // made of nothing but nested empty directories was readdir'd in full at
+    // boot. The marker file at the bottom has a name the read tools refuse:
+    // its `unusable-path` problem is reported only if the walk got that deep.
+    const dir = join(root, 'deep');
+    const deepest = join(dir, 'a', 'b', 'c', 'd', 'e', 'f');
+    await mkdir(deepest, { recursive: true });
+    await writeFile(join(deepest, 'pct%20name.txt'), 'x');
+
+    const problems: DiscoveryProblem[] = [];
+    const files = await walkFiles(dir, problems, 100, 3);
+    expect(files).toEqual([]);
+    expect(problems.map((p) => p.reason)).toEqual(['file-limit']);
+    expect(problems[0]!.detail).toMatch(/director/);
+  });
+
   it(`caps the listing at ${MAX_SKILLS} and reports the excess`, async () => {
     for (let i = 0; i < MAX_SKILLS + 3; i += 1) {
       await skill(join(root, `s${String(i).padStart(3, '0')}`), `name: s${String(i).padStart(3, '0')}\ndescription: d`);
