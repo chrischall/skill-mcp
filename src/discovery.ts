@@ -108,29 +108,38 @@ export interface DiscoveredSkill {
   declaration: SkillDeclaration;
 }
 
+/**
+ * Every reason `skill_list` can report a problem under. A runtime list, not
+ * only a type, so README's reason table is checked against it
+ * (tests/docs-sync.test.ts). The set is additive: a client switching on
+ * `reason` must treat one it does not know as a generic problem.
+ */
+export const PROBLEM_REASONS = [
+  'root-unreadable',
+  'no-skill-md',
+  'unreadable-skill-md',
+  'malformed-frontmatter',
+  'declaration',
+  'duplicate-name',
+  'name-mismatch',
+  'unusable-name',
+  'declared-script-missing',
+  /** A symlink led out of the configured root, or out of a skill directory. */
+  'symlink-escape',
+  /** A filename the read tools would refuse, so the manifest does not list it. */
+  'unusable-path',
+  'file-limit',
+  'skill-limit',
+  /** The registration granted a script the skill does not declare (`grant.ts`). */
+  'grant',
+  /** Hosted, and the exec-time environment block could not be wiped (`deps.ts`). */
+  'environ-unscrubbed',
+] as const;
+
 /** Why one directory is not (fully) being served. */
 export interface DiscoveryProblem {
   path: string;
-  reason:
-    | 'root-unreadable'
-    | 'no-skill-md'
-    | 'unreadable-skill-md'
-    | 'malformed-frontmatter'
-    | 'declaration'
-    | 'duplicate-name'
-    | 'name-mismatch'
-    | 'unusable-name'
-    | 'declared-script-missing'
-    /** A symlink led out of the configured root, or out of a skill directory. */
-    | 'symlink-escape'
-    /** A filename the read tools would refuse, so the manifest does not list it. */
-    | 'unusable-path'
-    | 'file-limit'
-    | 'skill-limit'
-    /** The registration granted a script the skill does not declare (`grant.ts`). */
-    | 'grant'
-    /** Hosted, and the exec-time environment block could not be wiped (`deps.ts`). */
-    | 'environ-unscrubbed';
+  reason: (typeof PROBLEM_REASONS)[number];
   detail: string;
 }
 

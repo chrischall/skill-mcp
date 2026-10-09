@@ -79,6 +79,34 @@ served under its *target* directory's name — `skills/foo -> ../bar` is the ski
 name — and a directory reached twice (a link to a skill that is also listed
 directly) is one skill, not a duplicate.
 
+### Problem reasons
+
+Each entry in `problems` is `{path, reason, detail}`. `detail` is prose for a
+person; `reason` is the stable value to switch on.
+
+| reason | meaning |
+| --- | --- |
+| `root-unreadable` | a configured root could not be read at all |
+| `no-skill-md` | a candidate directory holds no `SKILL.md` |
+| `unreadable-skill-md` | `SKILL.md` is not a regular file, or could not be read |
+| `malformed-frontmatter` | the frontmatter does not parse |
+| `declaration` | the `mcp-host:` block was refused, or carries an unknown key (named in `detail`); the skill's scripts are affected, its instructions are not |
+| `duplicate-name` | two directories contribute one skill name; **both** are refused |
+| `name-mismatch` | the frontmatter `name` disagrees with the directory name, which wins |
+| `unusable-name` | the directory's own name is not addressable, so the skill is skipped |
+| `declared-script-missing` | a declared script is not in the bundle |
+| `symlink-escape` | a symlink leads out of the root or out of a skill |
+| `unusable-path` | a filename the read tools could not address, left out of the manifest |
+| `file-limit` | a skill holds more files or directories than the per-skill cap (2000 each); the manifest lists what was walked |
+| `skill-limit` | more skills than `MAX_SKILLS` (32) were found; the rest are ignored |
+| `grant` | `MCP_SKILL_RUN` names a script the skill does not declare, so that row grants nothing |
+| `environ-unscrubbed` | hosted, and the exec-time environment block could not be wiped, so no script runs (see the env allowlist note below) |
+
+**The set is additive.** New reasons arrive without a major version bump
+(`environ-unscrubbed` is the most recent), so a client that switches on `reason`
+must treat a value it does not recognise as a generic problem and show its
+`detail`, never fail on it.
+
 ## The execution fence
 
 `skill_run` executes third-party code. Every rule below narrows **which** code
@@ -162,8 +190,8 @@ The first call's `preview.willRun` is what the user approves, and it is the
 | `envNotSet` | *(only when non-empty)* declared-and-granted variables that are not set in this server's environment, so the script will not get them |
 | `envWarning` | *(standalone only, when it applies)* a sentence naming the variables this third-party script will be handed **only because its own SKILL.md asked for them**, with no `MCP_SKILL_RUN` grant behind them. Approve only if you would give that skill those secrets |
 
-A client should render the fields it knows and pass the rest through: the
-optional fields are additive.
+A client should render the fields it knows and pass the rest through: like
+`problems` above, the optional fields are additive.
 
 ### Why the confirmation gate is blanket
 

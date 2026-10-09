@@ -1,6 +1,6 @@
 // Invariant: the tool tables in README.md and CLAUDE.md name exactly the
-// arguments each registered tool takes over tools/list; README's preview
-// table names exactly the fields the code emits.
+// arguments each registered tool takes over tools/list; README's preview and
+// problem-reason tables name exactly the fields and reasons the code emits.
 //
 // The bug it guards (chrischall/fleet-audit#1120): skill_file grew from one
 // `path` to a `paths[]` batch, CLAUDE.md was updated and the README — the file
@@ -14,6 +14,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createTestHarness, parseToolResult } from '@chrischall/mcp-utils/test';
 import { createDeps } from '../src/deps.js';
+import { PROBLEM_REASONS } from '../src/discovery.js';
 import { registerSkillTools } from '../src/tools/skills.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -150,5 +151,15 @@ describe('documented skill_run preview fields', () => {
     for (const name of ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MCP_DATA_DIR']) {
       expect(section, name).toContain(`\`${name}\``);
     }
+  });
+});
+
+describe('documented skill_list problem reasons', () => {
+  it("README's reason table names exactly the reasons discovery can report", () => {
+    expect(tableNamesUnder('### Problem reasons')).toEqual([...PROBLEM_REASONS].sort());
+  });
+
+  it('tells clients the reason set grows, so an unknown one must not break them', () => {
+    expect(sectionUnder('### Problem reasons')).toMatch(/additive/i);
   });
 });
