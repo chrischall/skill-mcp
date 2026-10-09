@@ -140,10 +140,30 @@ runs and **what it is handed**; each has its own test.
   call starts no process and returns `status: "confirmation-required"` with a
   preview of exactly what would run — the interpreter, the argv, the working
   directory, the timeout, and the **names** of the variables the script would be
-  handed — plus a `confirmToken`. Only a repeat call with the same arguments and
+  handed (field by field in [the preview](#the-skill_run-preview)) — plus a
+  `confirmToken`. Only a repeat call with the same arguments and
   that token runs the script, once. A token is bound to that exact run: changing
   the skill, script or argv is refused as `DRAFT_CHANGED`, and a used token as
   `TOKEN_REUSED`. See [Confirmations](#confirmations).
+
+### The `skill_run` preview
+
+The first call's `preview.willRun` is what the user approves, and it is the
+`confirmToken`'s payload: the token is bound to it. Names only — never a value.
+
+| field | |
+| --- | --- |
+| `skill` | the skill, by its directory name |
+| `interpreter` | the declared interpreter (`node`) |
+| `argv` | the script path followed by the arguments, exactly as they will be passed |
+| `cwd` | the skill's own directory, where the script runs |
+| `timeoutMs` | the wall-clock budget, after the 300 s clamp |
+| `envNames` | **every** variable the script will be handed, sorted — not only the granted ones. That is whichever of the fixed allowlist (`PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`) and the host-injected `MCP_DATA_DIR` are set, plus each declared-and-granted variable that is set. It is computed by the same function the run uses, so it matches what the script receives name for name |
+| `envNotSet` | *(only when non-empty)* declared-and-granted variables that are not set in this server's environment, so the script will not get them |
+| `envWarning` | *(standalone only, when it applies)* a sentence naming the variables this third-party script will be handed **only because its own SKILL.md asked for them**, with no `MCP_SKILL_RUN` grant behind them. Approve only if you would give that skill those secrets |
+
+A client should render the fields it knows and pass the rest through: the
+optional fields are additive.
 
 ### Why the confirmation gate is blanket
 
