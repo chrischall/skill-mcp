@@ -697,4 +697,22 @@ describe('the skill_run preview names exactly what the script is handed', () => 
     expect(willRun.envNames).toEqual(run.env);
     expect(willRun.envNames).toEqual(['API_KEY', 'HOME', 'PATH', 'TZ']);
   });
+
+  it('warns, in standalone mode, that the skill\'s own declaration is handing over a variable (fleet-audit#727)', async () => {
+    const { willRun } = await previewAndRun(sourceEnv({ SKILLS_DIR: envRoot }));
+    expect(willRun.envWarning).toMatch(/API_KEY/);
+    expect(willRun.envWarning).toMatch(/MCP_SKILL_RUN/);
+    expect(willRun.envWarning).not.toMatch(/PATH|HOME/);
+  });
+
+  it('carries no such warning when the owner granted the variable explicitly', async () => {
+    const { willRun } = await previewAndRun(
+      sourceEnv({
+        SKILLS_DIR: envRoot,
+        MCP_SKILL_RUN: JSON.stringify([{ skill: 'needs-key', script: 'scripts/env.js', env: ['API_KEY'] }]),
+      }),
+    );
+    expect(willRun.envNames).toContain('API_KEY');
+    expect(willRun.envWarning).toBeUndefined();
+  });
 });

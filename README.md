@@ -247,7 +247,12 @@ and the hosted half is fail-closed.**
   marker check can only ever move the default in the fail-closed direction.
 - **Standalone** — no injected marker at all: the skill's own declaration
   stands. Nothing is injecting anything, and the person who pointed the server at
-  a directory is the owner.
+  a directory is the owner. **That includes the variables a script declares:**
+  a skill whose `env:` names `GITHUB_TOKEN` is handed your `GITHUB_TOKEN` from
+  this server's environment (which an MCP client usually fills from your shell),
+  gated only by the `skill_run` confirmation. The preview says so by name
+  (`envWarning`); only point a standalone server at skills you would hand those
+  secrets to, or set `MCP_SKILL_RUN` to grant variables explicitly.
 
 `skill_list` reports which case it is (`grantFrom`, plus a `grantNote` in the
 hosted one) and lists a skill's declared-but-ungranted scripts, so "nothing

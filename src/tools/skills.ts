@@ -493,6 +493,16 @@ async function previewRun(
   // `typeof === 'string'`, matching buildScriptEnv exactly: `!== undefined` is
   // true for a name inherited from Object.prototype.
   const envNotSet = declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string');
+  // With no grant at all (standalone, `grantFrom: 'declaration'`) the skill's
+  // OWN frontmatter decided which of this server's variables it is handed, and
+  // the only gate left is this confirmation — which a model can be talked into
+  // by the very SKILL.md it just loaded. Say so in the preview, by name, so the
+  // person approving sees that third-party code is about to receive their
+  // secrets (chrischall/fleet-audit#727).
+  const selfGranted =
+    deps.config.grantFrom === 'declaration'
+      ? declared.env.filter((name) => envNames.includes(name))
+      : [];
   return {
     dryRun: true,
     willRun: {
@@ -504,6 +514,11 @@ async function previewRun(
       // NAMES only, never values: this body is a tool result.
       envNames,
       ...(envNotSet.length > 0 ? { envNotSet } : {}),
+      ...(selfGranted.length > 0
+        ? {
+            envWarning: `No MCP_SKILL_RUN grant is set, so this third-party script will be handed the VALUES of ${selfGranted.join(', ')} from this server's environment only because its own SKILL.md asked for them. Approve only if you would give this skill those secrets; set MCP_SKILL_RUN to grant variables explicitly.`,
+          }
+        : {}),
     },
     note: 'No process has been started. It runs only once the user confirms it. This server cannot tell what a script does — it only decides which script runs and what it is handed.',
   };
