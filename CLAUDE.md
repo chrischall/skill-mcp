@@ -77,8 +77,10 @@ never the only one — everything reachable there is reachable through the tools
   `/proc/<ppid>/environ`, which is the ORIGINAL `execve` block, not
   `process.env`. Every variable is re-homed (assigned to itself, so `setenv`
   copies it to the heap) BEFORE the block is zeroed through `/proc/self/mem` —
-  reverse that order and `getenv` reads zeros. It never throws; a refusal is a
-  stderr line and the server boots. `tests/scrub-environ.test.ts` proves it
+  reverse that order and `getenv` reads zeros. It never throws and the server
+  always boots; a refusal is a stderr line, and HOSTED it also refuses every
+  `skill_run` and lists `environ-unscrubbed` in `skill_list` (`src/deps.ts`)
+  unless the owner sets `MCP_SKILL_ALLOW_UNSCRUBBED=1`. Standalone stays open. `tests/scrub-environ.test.ts` proves it
   against a real kernel on Linux CI (skipped on macOS).
 - **Every path is checked twice, on the STRING and on the resolved real path**
   (`src/paths.ts`). No leading `/`, no `.`/`..` segment, no backslash, no
@@ -92,7 +94,7 @@ never the only one — everything reachable there is reachable through the tools
   for the real size, then read at most `maxBytes + 1` — the one extra byte is
   what decides `truncated` without a second syscall.
 - **Caps are stated, not discovered.** `MAX_SKILLS` 32,
-  `MAX_FILES_PER_SKILL` 2000, `MAX_SKILL_MD_BYTES` 256 KiB,
+  `MAX_FILES_PER_SKILL` 2000, `MAX_DIRS_PER_SKILL` 2000, `MAX_SKILL_MD_BYTES` 256 KiB,
   `MAX_FRONTMATTER_BYTES` 64 KiB, `MAX_FILE_BYTES` 1 MiB,
   `MAX_FILE_PATHS` 8 and `MAX_BATCH_BYTES` 4 MiB for one `skill_file` call,
   `MAX_STREAM_BYTES` 1 MiB and `MAX_TIMEOUT_MS` 300 s for a run,

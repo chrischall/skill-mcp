@@ -37,9 +37,10 @@ skill_run(name: "skill-mcp-demo", script: "scripts/report.js", args: ["hello"])
 ```
 
 `skill_run` asks the user to confirm first. Where the client cannot show a
-confirmation prompt, that first call starts nothing and returns a preview of
-exactly what would run plus a `confirmToken`; once the user approves, call again
-with the same arguments and `confirmToken: "<token>"`.
+confirmation prompt (or the server sets `MCP_CONFIRM_ELICITATION=off`, which
+sends every client down this path), that first call starts nothing and returns
+a preview of exactly what would run plus a `confirmToken`; once the user
+approves, call again with the same arguments and `confirmToken: "<token>"`.
 
 ## What the fence does and does not do
 

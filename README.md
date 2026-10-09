@@ -44,16 +44,16 @@ order.
 | --- | --- | --- |
 | `skill_list` | — | every skill found: name, description, when to use it, file count, whether it declares runnable scripts and **exactly which**; plus `problems`, so an empty list is never a mystery |
 | `skill_load` | `name` | the SKILL.md body **verbatim**, plus a manifest of the bundle's files. Referenced files are not inlined — that is what `skill_file` is for |
-| `skill_file` | `name`, `path` | one file from that skill's directory: text, or base64 with its media type. At most 1 MiB, `truncated: true` rather than a silent cut |
+| `skill_file` | `name`, `paths[]` | one entry per path, in request order: text, or base64 with its media type, or that path's own error. At most 1 MiB per entry, `truncated: true` rather than a silent cut |
 | `skill_run` | `name`, `script`, `args[]`, `confirmToken` | `{exitCode, stdout, stderr, truncated, durationMs}` |
 
-`skill_file` takes **one** path. The design of record specifies a `paths[]`
-batch (8 paths per call, 1 MiB per entry, 4 MiB per call, one bad path failing
-only its own slot); shipping the singular form is a deliberate deferral, not an
-oversight, and those three bounds are what a later batching change has to
-honour. Read the caps as bounds on this server's own heap: they cap the
-**allocation**, not only the answer, because a hosted child has a hard 256 MiB
-data limit and a bundle may be larger than that.
+`skill_file` takes a `paths[]` batch, so the files a SKILL.md points at come
+back in one round trip: at most 8 paths per call, 1 MiB per entry and 4 MiB per
+call (summed from file sizes before a byte is read, so the answer never depends
+on the order the paths were listed in). One bad path fails only its own entry —
+the rest of the batch is still served. Read the caps as bounds on this server's
+own heap: they cap the **allocation**, not only the answer, because a hosted
+child has a hard 256 MiB data limit and a bundle may be larger than that.
 
 Each skill is **also** registered as an MCP prompt (its body is the message) and
 each bundled file as a resource (`skill://<name>/<path>`), because a client that
@@ -73,7 +73,11 @@ the bundle, a symlink leading out of the root or out of a skill, a filename the
 read tools could not address. One bad skill costs itself and never the listing,
 and there is no third outcome where something is dropped in silence — a
 symlinked skill directory is **served** when it stays inside the root (so
-`skills/foo -> ../shared/foo` works) and **reported** when it does not.
+`skills/foo -> ../shared/foo` works) and **reported** when it does not. It is
+served under its *target* directory's name — `skills/foo -> ../bar` is the skill
+`bar`, reported as a `name-mismatch` so a grant is written against the right
+name — and a directory reached twice (a link to a skill that is also listed
+directly) is one skill, not a duplicate.
 
 ## The execution fence
 
@@ -119,7 +123,10 @@ runs and **what it is handed**; each has its own test.
   A script runs as the same uid as this server. On Linux a same-uid process can
   read `/proc/<parent pid>/environ`, so at boot the server wipes that
   exec-time environment block (`src/scrub-environ.ts`; `process.env` keeps
-  every value) and that one-line read comes back empty. The values still live
+  every value) and that one-line read comes back empty. If a kernel or sandbox
+  refuses that wipe, a **hosted** server runs no script at all — `skill_run`
+  refuses and `skill_list` reports `environ-unscrubbed` — unless the owner sets
+  `MCP_SKILL_ALLOW_UNSCRUBBED=1`; standalone it only warns on stderr. The values still live
   in the server's memory, reachable through `ptrace` or `/proc/<pid>/mem` on a
   kernel at Yama `ptrace_scope = 0`. Real isolation between skills that do not
   trust each other needs the tier (a distinct uid for scripts, `/proc` mounted
@@ -128,7 +135,8 @@ runs and **what it is handed**; each has its own test.
 - **A non-zero exit is a normal, reported outcome** — exit code, stdout and
   stderr all come back. It is never an exception that loses the output.
 - **`skill_run` asks before it runs anything.** On a client that can show a
-  confirmation prompt (Claude Code) the user is asked there. Otherwise the first
+  confirmation prompt (Claude Code) the user is asked there, unless the server
+  sets `MCP_CONFIRM_ELICITATION=off`. Otherwise the first
   call starts no process and returns `status: "confirmation-required"` with a
   preview of exactly what would run — the interpreter, the argv, the working
   directory, the timeout, and the **names** of the variables the script would be
@@ -221,6 +229,7 @@ its instructions, and never the rest of the listing.
 | `MCP_SKILLS_PATH` | `:`-separated slot roots, injected by mcp-host's runner. Wins over everything |
 | `SKILLS_DIR` | the same thing for local use. Read only when `MCP_SKILLS_PATH` is unset |
 | `MCP_SKILL_RUN` | optional JSON `[{skill, script, env?}]` — the owner's grant. **Narrow-only** |
+| `MCP_SKILL_ALLOW_UNSCRUBBED` | `1` lets a hosted server run scripts even though its exec-time environment block could not be wiped (see the env allowlist note). Off by default |
 | *(neither set)* | this package's own `skills/` directory |
 
 `MCP_SKILL_RUN` deserves the emphasis. When it is present, what may run is the
@@ -247,7 +256,12 @@ and the hosted half is fail-closed.**
   marker check can only ever move the default in the fail-closed direction.
 - **Standalone** — no injected marker at all: the skill's own declaration
   stands. Nothing is injecting anything, and the person who pointed the server at
-  a directory is the owner.
+  a directory is the owner. **That includes the variables a script declares:**
+  a skill whose `env:` names `GITHUB_TOKEN` is handed your `GITHUB_TOKEN` from
+  this server's environment (which an MCP client usually fills from your shell),
+  gated only by the `skill_run` confirmation. The preview says so by name
+  (`envWarning`); only point a standalone server at skills you would hand those
+  secrets to, or set `MCP_SKILL_RUN` to grant variables explicitly.
 
 `skill_list` reports which case it is (`grantFrom`, plus a `grantNote` in the
 hosted one) and lists a skill's declared-but-ungranted scripts, so "nothing

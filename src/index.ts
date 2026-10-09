@@ -9,7 +9,9 @@ import { scrubExecEnvironment } from './scrub-environ.js';
 // FIRST, before any script can exist: wipe the exec-time environment block so
 // a script cannot read every credential this registration holds out of
 // /proc/<ppid>/environ (src/scrub-environ.ts, chrischall/fleet-audit#244).
-// process.env keeps every value. Stderr only — stdout is the MCP channel.
+// process.env keeps every value. Stderr only — stdout is the MCP channel. The
+// outcome is also handed to the deps: hosted, a failed scrub refuses skill_run
+// and is reported by skill_list (src/deps.ts, chrischall/fleet-audit#1121).
 const scrub = scrubExecEnvironment();
 if (scrub.status === 'failed') {
   process.stderr.write(
@@ -21,7 +23,7 @@ if (scrub.status === 'failed') {
 // scanning the roots never throws, an unreadable root or an unreadable grant
 // becomes a reported problem rather than a boot failure, and the server answers
 // a host's install-time tools/list probe even when it was pointed at nothing.
-const deps = await createDeps();
+const deps = await createDeps(process.env, scrub);
 
 await runMcp({
   name: 'skill-mcp',

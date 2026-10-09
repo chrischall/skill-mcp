@@ -61,6 +61,13 @@ export const MAX_SKILLS = 32;
 /** Bounds the manifest walk of one skill directory. */
 export const MAX_FILES_PER_SKILL = 2_000;
 
+/**
+ * Bounds the DIRECTORIES that walk descends into. The file cap alone is only
+ * checked when a regular file turns up, so a bundle of nothing but nested empty
+ * directories was readdir'd in full at boot (chrischall/fleet-audit#723).
+ */
+export const MAX_DIRS_PER_SKILL = 2_000;
+
 /** Largest SKILL.md this adapter reads (docs/SKILL-MCP.md §2.1). */
 export const MAX_SKILL_MD_BYTES = 256 * 1024;
 
@@ -121,7 +128,9 @@ export interface DiscoveryProblem {
     | 'file-limit'
     | 'skill-limit'
     /** The registration granted a script the skill does not declare (`grant.ts`). */
-    | 'grant';
+    | 'grant'
+    /** Hosted, and the exec-time environment block could not be wiped (`deps.ts`). */
+    | 'environ-unscrubbed';
   detail: string;
 }
 
@@ -169,20 +178,26 @@ async function isFile(path: string): Promise<boolean> {
  * The cap STOPS THE WALK rather than only bounding the array: capping the
  * array alone still readdir'd every remaining directory, so a bundle that is
  * mostly empty directories paid for all of them at boot with nothing to show
- * for it. `maxFiles` is a parameter so that bound is testable without writing
- * two thousand files.
+ * for it. Directories are counted against their own cap for the same reason:
+ * a tree with no files in it never reaches the file check at all. `maxFiles`
+ * and `maxDirs` are parameters so those bounds are testable without writing
+ * two thousand of anything.
+ *
+ * The queue is read through an index rather than `shift()`, which is O(n) per
+ * call and made the walk quadratic in the number of directories.
  */
 export async function walkFiles(
   dir: string,
   problems: DiscoveryProblem[],
   maxFiles: number = MAX_FILES_PER_SKILL,
+  maxDirs: number = MAX_DIRS_PER_SKILL,
 ): Promise<SkillFile[]> {
   const files: SkillFile[] = [];
   const queue: string[] = [''];
-  let capped = false;
+  let capped: 'files' | 'directories' | undefined;
 
-  walk: while (queue.length > 0) {
-    const rel = queue.shift() as string;
+  walk: for (let next = 0; next < queue.length; next += 1) {
+    const rel = queue[next]!;
     let entries;
     try {
       entries = await readdir(join(dir, rel), { withFileTypes: true });
@@ -202,12 +217,17 @@ export async function walkFiles(
         continue;
       }
       if (entry.isDirectory()) {
+        // `queue.length - 1`: the skill directory itself is not counted.
+        if (queue.length - 1 >= maxDirs) {
+          capped = 'directories';
+          break walk;
+        }
         queue.push(childRel);
         continue;
       }
       if (!entry.isFile()) continue;
       if (files.length >= maxFiles) {
-        capped = true;
+        capped = 'files';
         break walk;
       }
       const st = await lstat(join(dir, childRel)).catch(() => null);
@@ -216,11 +236,14 @@ export async function walkFiles(
     }
   }
 
-  if (capped) {
+  if (capped !== undefined) {
     problems.push({
       path: dir,
       reason: 'file-limit',
-      detail: `more than ${maxFiles} files; the manifest lists the first ${maxFiles} and the rest of the bundle is not walked`,
+      detail:
+        capped === 'files'
+          ? `more than ${maxFiles} files; the manifest lists the first ${maxFiles} and the rest of the bundle is not walked`
+          : `more than ${maxDirs} directories; the manifest lists the ${files.length} files found in the first ${maxDirs} and the rest of the bundle is not walked`,
     });
   }
 
@@ -430,7 +453,20 @@ async function candidates(
       // never was — plain files are skipped here without comment.
       if (link && !(await isDirectory(real))) continue;
 
-      if (await isFile(join(real, 'SKILL.md'))) dirs.push(real);
+      const isSkill = await isFile(join(real, 'SKILL.md'));
+      // A skill is named by its REAL directory (the grant keys on it), so a
+      // link whose own name differs serves the skill under the target's name.
+      // Said rather than left to be found: a grant written against the link's
+      // name would silently match nothing (chrischall/fleet-audit#722).
+      if (isSkill && link && entry.name !== basename(real)) {
+        problems.push({
+          path: dir,
+          reason: 'name-mismatch',
+          detail: `this entry is a symlink to ${real}, and a skill is served under its real directory's name; serving it as "${basename(real)}", which is also the name a grant must use`,
+        });
+      }
+
+      if (isSkill) dirs.push(real);
       else if (deferred) continue;
       else nonSkill.push(real);
     }
@@ -463,6 +499,11 @@ async function candidates(
 export async function discoverSkills(roots: string[]): Promise<Catalog> {
   const problems: DiscoveryProblem[] = [];
   const found: DiscoveredSkill[] = [];
+  // Every candidate is a REAL path, so one directory reached twice — through a
+  // symlink alias inside the root, or a root configured twice — is read once.
+  // Only DISTINCT directories can collide; refusing an alias as its own
+  // duplicate made the skill vanish (chrischall/fleet-audit#722).
+  const seen = new Set<string>();
 
   for (const root of roots) {
     let realRoot: string;
@@ -480,6 +521,8 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
 
     const { dirs, nonSkill } = await candidates(realRoot, problems);
     for (const dir of nonSkill) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
       problems.push({
         path: dir,
         reason: 'no-skill-md',
@@ -488,6 +531,8 @@ export async function discoverSkills(roots: string[]): Promise<Catalog> {
     }
 
     for (const dir of dirs) {
+      if (seen.has(dir)) continue;
+      seen.add(dir);
       const skill = await readSkill(dir, root, problems);
       if (skill) found.push(skill);
     }

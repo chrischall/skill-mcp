@@ -20,6 +20,7 @@ import type { DiscoveredSkill } from '../discovery.js';
 import { MAX_SKILL_MD_BYTES } from '../discovery.js';
 import { MAX_ARGS, interpreterNames, isRunnableInterpreter, runDeclaredScript } from '../run.js';
 import { resolveInsideSkill } from '../paths.js';
+import { buildScriptEnv } from '../env.js';
 import { readCapped } from '../read-capped.js';
 import { stat } from 'node:fs/promises';
 
@@ -353,7 +354,7 @@ export function registerSkillTools(server: McpServer, deps: SkillMcpDeps): void 
     'skill_run',
     {
       description:
-        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Asks the user to confirm first: a confirmation prompt where the client supports one; otherwise the first call returns a preview of exactly what would run and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).",
+        "Execute a script the skill DECLARES as runnable, with an argument array. Returns the exit code and the captured output; a non-zero exit is a normal, reported outcome. Asks the user to confirm first: a confirmation prompt where the client supports one (unless MCP_CONFIRM_ELICITATION=off); otherwise the first call returns a preview of exactly what would run and a confirmToken, and only a repeat call with that token proceeds (see MCP_CONFIRM_MODE).",
       annotations: {
         title: 'Run a declared skill script',
         readOnlyHint: false,
@@ -452,6 +453,12 @@ async function previewRun(
   script: string,
   args: string[],
 ): Promise<{ dryRun: true; willRun: Record<string, unknown>; note: string }> {
+  if (deps.runBlocked !== undefined) {
+    throw new McpToolError(`no script may run on this server: ${deps.runBlocked}`, {
+      hint: "Every skill's instructions and files are still served through skill_load and skill_file.",
+    });
+  }
+
   const declared = skill.scripts.find((entry) => entry.script === script);
   if (!declared) {
     const offered = skill.scripts.map((entry) => entry.script);
@@ -483,10 +490,25 @@ async function previewRun(
   // out of the tree is refused at the preview too.
   await resolveInsideSkill(skill.dir, script);
 
+  // Computed by buildScriptEnv itself — the function the run uses — so the
+  // preview names the variables the script will actually be handed (the
+  // ambient allowlist, the injected names and the granted ones) and no others.
+  // A hand-rolled copy listed only the granted names and drifted from the
+  // receipt (chrischall/fleet-audit#726).
+  const envNames = Object.keys(buildScriptEnv(declared.env, deps.sourceEnv)).sort();
   // `typeof === 'string'`, matching buildScriptEnv exactly: `!== undefined` is
-  // true for a name inherited from Object.prototype, and the preview must name
-  // the variables the script will actually be handed and no others.
-  const env = declared.env.filter((name) => typeof deps.sourceEnv[name] === 'string');
+  // true for a name inherited from Object.prototype.
+  const envNotSet = declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string');
+  // With no grant at all (standalone, `grantFrom: 'declaration'`) the skill's
+  // OWN frontmatter decided which of this server's variables it is handed, and
+  // the only gate left is this confirmation — which a model can be talked into
+  // by the very SKILL.md it just loaded. Say so in the preview, by name, so the
+  // person approving sees that third-party code is about to receive their
+  // secrets (chrischall/fleet-audit#727).
+  const selfGranted =
+    deps.config.grantFrom === 'declaration'
+      ? declared.env.filter((name) => envNames.includes(name))
+      : [];
   return {
     dryRun: true,
     willRun: {
@@ -496,10 +518,11 @@ async function previewRun(
       cwd: skill.dir,
       timeoutMs: declared.timeoutMs,
       // NAMES only, never values: this body is a tool result.
-      envNames: env,
-      ...(declared.env.length > env.length
+      envNames,
+      ...(envNotSet.length > 0 ? { envNotSet } : {}),
+      ...(selfGranted.length > 0
         ? {
-            envNotSet: declared.env.filter((name) => typeof deps.sourceEnv[name] !== 'string'),
+            envWarning: `No MCP_SKILL_RUN grant is set, so this third-party script will be handed the VALUES of ${selfGranted.join(', ')} from this server's environment only because its own SKILL.md asked for them. Approve only if you would give this skill those secrets; set MCP_SKILL_RUN to grant variables explicitly.`,
           }
         : {}),
     },

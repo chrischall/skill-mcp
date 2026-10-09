@@ -629,3 +629,147 @@ describe('skill_run', () => {
     expect(result.isError).toBe(true);
   });
 });
+
+describe('the skill_run preview names exactly what the script is handed', () => {
+  let envRoot = '';
+
+  beforeAll(async () => {
+    envRoot = await realpath(await mkdtemp(join(tmpdir(), 'skill-env-')));
+    const dir = join(envRoot, 'needs-key');
+    await mkdir(join(dir, 'scripts'), { recursive: true });
+    await writeFile(
+      join(dir, 'SKILL.md'),
+      [
+        '---',
+        'name: needs-key',
+        'description: Asks for an API key.',
+        'mcp-host:',
+        '  version: 1',
+        '  run:',
+        '    - script: scripts/env.js',
+        '      interpreter: node',
+        '      env: [API_KEY]',
+        '---',
+        'x',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(join(dir, 'scripts', 'env.js'), `process.stdout.write('ok');\n`);
+  });
+
+  afterAll(async () => {
+    if (envRoot) await rm(envRoot, { recursive: true, force: true });
+  });
+
+  const sourceEnv = (extra: Record<string, string>) => ({
+    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    HOME: '/home/someone',
+    TZ: 'UTC',
+    API_KEY: 'secret-value',
+    UNRELATED_TOKEN: 'never-handed',
+    ...extra,
+  });
+
+  async function previewAndRun(env: Record<string, string>) {
+    const local = await createTestHarness(async (server) =>
+      registerSkillTools(server, await createDeps(env)),
+    );
+    try {
+      const call = { name: 'needs-key', script: 'scripts/env.js' };
+      const phase1 = parseToolResult<{
+        confirmToken: string;
+        preview: { willRun: { envNames: string[]; envWarning?: string } };
+      }>(await local.callTool('skill_run', call));
+      const run = parseToolResult<{ exitCode: number; env: string[] }>(
+        await local.callTool('skill_run', { ...call, confirmToken: phase1.confirmToken }),
+      );
+      return { willRun: phase1.preview.willRun, run };
+    } finally {
+      await local.close();
+    }
+  }
+
+  it('lists the ambient and injected names as well as the granted ones (fleet-audit#726)', async () => {
+    const { willRun, run } = await previewAndRun(sourceEnv({ SKILLS_DIR: envRoot }));
+    expect(run.exitCode).toBe(0);
+    // The preview is the one surface where a caller sees what is handed over
+    // BEFORE it happens, so it must agree with the receipt name for name.
+    expect(willRun.envNames).toEqual(run.env);
+    expect(willRun.envNames).toEqual(['API_KEY', 'HOME', 'PATH', 'TZ']);
+  });
+
+  it('warns, in standalone mode, that the skill\'s own declaration is handing over a variable (fleet-audit#727)', async () => {
+    const { willRun } = await previewAndRun(sourceEnv({ SKILLS_DIR: envRoot }));
+    expect(willRun.envWarning).toMatch(/API_KEY/);
+    expect(willRun.envWarning).toMatch(/MCP_SKILL_RUN/);
+    expect(willRun.envWarning).not.toMatch(/PATH|HOME/);
+  });
+
+  it('carries no such warning when the owner granted the variable explicitly', async () => {
+    const { willRun } = await previewAndRun(
+      sourceEnv({
+        SKILLS_DIR: envRoot,
+        MCP_SKILL_RUN: JSON.stringify([{ skill: 'needs-key', script: 'scripts/env.js', env: ['API_KEY'] }]),
+      }),
+    );
+    expect(willRun.envNames).toContain('API_KEY');
+    expect(willRun.envWarning).toBeUndefined();
+  });
+});
+
+describe('a failed exec-environment scrub (fleet-audit#1121)', () => {
+  const failed = { status: 'failed', reason: '/proc/self/mem refused the write' } as const;
+  const grant = JSON.stringify([{ skill: 'demo', script: 'scripts/echo.js' }]);
+
+  async function withDeps<T>(
+    env: Record<string, string>,
+    fn: (h: Awaited<ReturnType<typeof createTestHarness>>) => Promise<T>,
+  ): Promise<T> {
+    const local = await createTestHarness(async (server) =>
+      registerSkillTools(server, await createDeps(env, failed)),
+    );
+    try {
+      return await fn(local);
+    } finally {
+      await local.close();
+    }
+  }
+
+  it('refuses skill_run when hosted, starting no process, and reports why in skill_list', async () => {
+    await withDeps({ MCP_SKILLS_PATH: root, MCP_SKILL_RUN: grant }, async (h) => {
+      const before = await runCount();
+      const run = await h.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js' });
+      expect(run.isError).toBe(true);
+      expect(JSON.stringify(run.content)).toMatch(/environ/);
+      expect(JSON.stringify(run.content)).toMatch(/MCP_SKILL_ALLOW_UNSCRUBBED/);
+      expect(await runCount()).toBe(before);
+
+      const list = parseToolResult<{ problems: { reason: string; detail: string }[] }>(
+        await h.callTool('skill_list'),
+      );
+      const problem = list.problems.find((p) => p.reason === 'environ-unscrubbed');
+      expect(problem?.detail).toMatch(/refused the write/);
+    });
+  });
+
+  it('lets the owner opt back in with MCP_SKILL_ALLOW_UNSCRUBBED=1', async () => {
+    await withDeps(
+      { MCP_SKILLS_PATH: root, MCP_SKILL_RUN: grant, MCP_SKILL_ALLOW_UNSCRUBBED: '1' },
+      async (h) => {
+        const body = parseToolResult<{ status: string }>(
+          await h.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js' }),
+        );
+        expect(body.status).toBe('confirmation-required');
+      },
+    );
+  });
+
+  it('stays fail-open standalone, where the script owner and the server owner are one person', async () => {
+    await withDeps({ SKILLS_DIR: root }, async (h) => {
+      const body = parseToolResult<{ status: string }>(
+        await h.callTool('skill_run', { name: 'demo', script: 'scripts/echo.js' }),
+      );
+      expect(body.status).toBe('confirmation-required');
+    });
+  });
+});
