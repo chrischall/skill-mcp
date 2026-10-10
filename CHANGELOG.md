@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/chrischall/skill-mcp/compare/v1.2.1...v1.2.2) (2026-10-10)
+
+
+### Documentation
+
+* make AGENTS.md a symlink to CLAUDE.md ([#64](https://github.com/chrischall/skill-mcp/issues/64)) ([c1dcd33](https://github.com/chrischall/skill-mcp/commit/c1dcd3352cba903257515417f8629e1cf26bf6cf))
+
 ## [1.2.1](https://github.com/chrischall/skill-mcp/compare/v1.2.0...v1.2.1) (2026-10-09)
 
 
