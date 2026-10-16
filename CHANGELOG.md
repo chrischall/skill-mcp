@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.2](https://github.com/chrischall/skill-mcp/compare/v1.2.1...v1.2.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **run:** hand scripts the egress proxy variables and launch the plugin via npx ([#66](https://github.com/chrischall/skill-mcp/issues/66)) ([830cdba](https://github.com/chrischall/skill-mcp/commit/830cdba46d2a6c946c9fee3cd6bcf6b83b016026))
+
+
+### Documentation
+
+* make AGENTS.md a symlink to CLAUDE.md ([#64](https://github.com/chrischall/skill-mcp/issues/64)) ([c1dcd33](https://github.com/chrischall/skill-mcp/commit/c1dcd3352cba903257515417f8629e1cf26bf6cf))
+
 ## [1.2.1](https://github.com/chrischall/skill-mcp/compare/v1.2.0...v1.2.1) (2026-10-09)
 
 
