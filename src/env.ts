@@ -48,8 +48,24 @@ export const AMBIENT_SCRIPT_ALLOWLIST = ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR']
  * is the writable directory a script is supposed to use, since the bundle slot
  * is read-only (§5.3) — naming it in the failure is the adapter's job, so
  * handing it over is the other half of that.
+ *
+ * The proxy variables are the isolated tier's egress fence
+ * (chrischall/fleet-audit#1199). mcp-host's runner pins them on the child over
+ * the registration's own env and drops every other outbound packet in the
+ * kernel, so a script that is NOT handed them opens a direct socket and times
+ * out — even to a host the owner allowlisted. They name a loopback proxy, not a
+ * credential. Present only when the host set them; standalone they are absent.
  */
-export const INJECTED_SCRIPT_ENV = ['MCP_DATA_DIR'] as const;
+export const INJECTED_SCRIPT_ENV = [
+  'MCP_DATA_DIR',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'NO_PROXY',
+  'no_proxy',
+  'NODE_USE_ENV_PROXY',
+] as const;
 
 /**
  * Build a script's environment: the ambient allowlist, the injected names, and

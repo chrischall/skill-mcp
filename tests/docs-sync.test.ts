@@ -148,7 +148,7 @@ describe('documented skill_run preview fields', () => {
 
   it('says envNames lists every variable handed over, the ambient allowlist included', () => {
     const section = sectionUnder('### The `skill_run` preview');
-    for (const name of ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MCP_DATA_DIR']) {
+    for (const name of ['PATH', 'HOME', 'LANG', 'TZ', 'TMPDIR', 'MCP_DATA_DIR', 'HTTPS_PROXY', 'NODE_USE_ENV_PROXY']) {
       expect(section, name).toContain(`\`${name}\``);
     }
   });
