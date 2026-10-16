@@ -81,6 +81,30 @@ describe('.claude-plugin/plugin.json', () => {
   });
 });
 
+describe('.mcp.json (the plugin MCP config)', () => {
+  // fleet-audit#1335/#1195: a git-source plugin install clones this repo and
+  // runs no build, and dist/ is gitignored, so `node ${CLAUDE_PLUGIN_ROOT}/dist/index.js`
+  // installed cleanly and then failed to connect (reproduced with
+  // `claude plugin install skill-mcp@chrischall`). Launch the published
+  // package instead, the way ofw-mcp does.
+  const cfg = JSON.parse(readFileSync(join(ROOT, '.mcp.json'), 'utf8')) as {
+    mcpServers: Record<string, { command: string; args?: string[] }>;
+  };
+
+  it('never launches a file under the gitignored dist/', () => {
+    for (const server of Object.values(cfg.mcpServers)) {
+      for (const word of [server.command, ...(server.args ?? [])]) {
+        expect(word).not.toMatch(/\$\{CLAUDE_PLUGIN_ROOT\}\/dist\//);
+      }
+    }
+  });
+
+  it('runs the published npm package through npx', () => {
+    expect(cfg.mcpServers.skill?.command).toBe('npx');
+    expect(cfg.mcpServers.skill?.args).toEqual(['-y', pkg.name]);
+  });
+});
+
 describe('registry constraints', () => {
   it("server.json's description is inside the registry's 100-char cap", () => {
     expect((serverJson.description as string).length).toBeLessThanOrEqual(100);

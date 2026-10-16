@@ -281,6 +281,35 @@ describe('rule: the env allowlist', () => {
     expect(env.SECRET).toBeUndefined();
   });
 
+  // fleet-audit#1199: on the isolated tier the runner pins these on the child
+  // and fences the network kernel-side, so a script WITHOUT them opens a direct
+  // socket the kernel drops — an allowlisted host times out. Handed over so the
+  // declared egress actually reaches scripts, and the note's 403 branch is real.
+  it('passes the host-pinned egress proxy variables through', () => {
+    const proxy = {
+      HTTP_PROXY: 'http://127.0.0.1:3128',
+      HTTPS_PROXY: 'http://127.0.0.1:3128',
+      http_proxy: 'http://127.0.0.1:3128',
+      https_proxy: 'http://127.0.0.1:3128',
+      NO_PROXY: 'localhost',
+      no_proxy: 'localhost',
+      NODE_USE_ENV_PROXY: '1',
+    };
+    const env = buildScriptEnv([], { ...proxy, SECRET: 's' });
+    expect(env).toEqual(proxy);
+  });
+
+  it('a script sees HTTPS_PROXY when the server does', async () => {
+    const result = await run(skillOf('demo'), 'scripts/echo.js', [], {
+      PATH: '/usr/bin:/bin',
+      HTTPS_PROXY: 'http://127.0.0.1:3128',
+      NODE_USE_ENV_PROXY: '1',
+    });
+    const env: string[] = JSON.parse(result.stdout).env;
+    expect(env).toContain('HTTPS_PROXY');
+    expect(env).toContain('NODE_USE_ENV_PROXY');
+  });
+
   it('never hands over a granted name the host reserves', () => {
     const env = buildScriptEnv(['MCP_SKILLS_PATH'], { MCP_SKILLS_PATH: '/slots/a' });
     expect(env.MCP_SKILLS_PATH).toBeUndefined();

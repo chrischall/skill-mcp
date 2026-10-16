@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "skill": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "@chrischall/skill-mcp"],
       "env": {
         "SKILLS_DIR": "${SKILLS_DIR}"
       }

@@ -142,7 +142,11 @@ runs and **what it is handed**; each has its own test.
   grandchild is dead. Bounding *that* is the tier's job (an unprivileged uid,
   `prlimit` NPROC, and a machine that stops), not this adapter's.
 - **An env allowlist.** A script gets `PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`,
-  `MCP_DATA_DIR` when the host set one, and **exactly the variables that script
+  `MCP_DATA_DIR` when the host set one, the egress proxy variables
+  (`HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`, `NO_PROXY`,
+  `no_proxy`, `NODE_USE_ENV_PROXY`) when the host set them — on mcp-host's
+  isolated tier the network is fenced and a script without them cannot reach
+  even an allowlisted host — and **exactly the variables that script
   asked for and the owner granted** — never this server's own environment. The
   fixed half mirrors mcp-host's `INSTALL_ALLOWLIST`
   (`packages/runner-node/src/spawn-env.ts`), for the reason that file gives: a
@@ -186,7 +190,7 @@ The first call's `preview.willRun` is what the user approves, and it is the
 | `argv` | the script path followed by the arguments, exactly as they will be passed |
 | `cwd` | the skill's own directory, where the script runs |
 | `timeoutMs` | the wall-clock budget, after the 300 s clamp |
-| `envNames` | **every** variable the script will be handed, sorted — not only the granted ones. That is whichever of the fixed allowlist (`PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`) and the host-injected `MCP_DATA_DIR` are set, plus each declared-and-granted variable that is set. It is computed by the same function the run uses, so it matches what the script receives name for name |
+| `envNames` | **every** variable the script will be handed, sorted — not only the granted ones. That is whichever of the fixed allowlist (`PATH`, `HOME`, `LANG`, `TZ`, `TMPDIR`) and the host-injected `MCP_DATA_DIR` and egress proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, their lower-case forms, `NO_PROXY`/`no_proxy`, `NODE_USE_ENV_PROXY`) are set, plus each declared-and-granted variable that is set. It is computed by the same function the run uses, so it matches what the script receives name for name |
 | `envNotSet` | *(only when non-empty)* declared-and-granted variables that are not set in this server's environment, so the script will not get them |
 | `envWarning` | *(standalone only, when it applies)* a sentence naming the variables this third-party script will be handed **only because its own SKILL.md asked for them**, with no `MCP_SKILL_RUN` grant behind them. Approve only if you would give that skill those secrets |
 
