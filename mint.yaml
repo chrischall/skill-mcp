@@ -17,6 +17,19 @@ name: Skills
 slug: skills
 summary: Serves a directory of Agent Skills — instructions, bundled files, and only the scripts a skill declares.
 
+# Sample prompts for the public catalog. Generic on purpose: which skills a
+# registration serves is the registration's content, not this package's, so a
+# prompt naming one particular skill would promise something a reader's own
+# registration may not carry. Each is answered by skill_list / skill_load /
+# skill_file alone — read-only, nothing executed.
+examples:
+  - prompt: What skills do you have available, and which of them can run scripts?
+    note: skill_list — every skill, its declared scripts, and any problems found.
+  - prompt: Load the instructions for the skill that fits this task, then follow them.
+    note: skill_list to choose, skill_load for the SKILL.md body verbatim.
+  - prompt: Show me the reference files bundled with that skill and summarise what each one covers.
+    note: skill_file reads up to 8 bundled files in one call.
+
 # The adapter itself reaches no host on the internet: it reads a directory the
 # runner hands it and executes declared scripts. An empty allowlist is the
 # deny-by-default answer, and it is a real value rather than a placeholder —
