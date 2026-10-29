@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.3](https://github.com/chrischall/skill-mcp/compare/v1.2.2...v1.2.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils ([#74](https://github.com/chrischall/skill-mcp/issues/74)) ([d30f699](https://github.com/chrischall/skill-mcp/commit/d30f6998d674e1fae8e92d9f14ed6088706dab1e))
+* **deps:** require @chrischall/mcp-utils 3.4.0 ([#75](https://github.com/chrischall/skill-mcp/issues/75)) ([6673923](https://github.com/chrischall/skill-mcp/commit/6673923466cc8ddb86d96e8ed40265da6a2c57ad))
+* **deps:** require the MCP SDK ^2.4.0 that mcp-utils 3.4.0 peer-requires ([#76](https://github.com/chrischall/skill-mcp/issues/76)) ([5ef9ee5](https://github.com/chrischall/skill-mcp/commit/5ef9ee532cd340a2dcaf5147d71f142a20005280))
+
+
+### Documentation
+
+* **mint:** add sample prompts for the public catalog ([#71](https://github.com/chrischall/skill-mcp/issues/71)) ([1a6380c](https://github.com/chrischall/skill-mcp/commit/1a6380c03e603a9c85e3794f93f5a84fc9db8564))
+
 ## [1.2.2](https://github.com/chrischall/skill-mcp/compare/v1.2.1...v1.2.2) (2026-10-16)
 
 
