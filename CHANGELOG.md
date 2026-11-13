@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/chrischall/skill-mcp/compare/v1.2.3...v1.2.4) (2026-11-13)
+
+
+### Bug Fixes
+
+* **deps:** bump @chrischall/mcp-utils ([#79](https://github.com/chrischall/skill-mcp/issues/79)) ([7c1b5b4](https://github.com/chrischall/skill-mcp/commit/7c1b5b4675e0835aebe67b9bc98926866a4cfa2a))
+
 ## [1.2.3](https://github.com/chrischall/skill-mcp/compare/v1.2.2...v1.2.3) (2026-10-29)
 
 
